@@ -4,7 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const primitives = @import("mod.zig");
-const ULID = @import("ulid").ULID;
+const ULID = @import("../ulid/mod.zig").ULID;
 
 /// A tau represents the update of a value during a time interval.
 pub const Tau = struct {

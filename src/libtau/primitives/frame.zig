@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const primitives = @import("mod.zig");
 const Schedule = primitives.Schedule;
-const ULID = @import("ulid").ULID;
+const ULID = @import("../ulid/mod.zig").ULID;
 
 /// A frame represents a collection of schedules identified by a unique id.
 pub const Frame = struct {
@@ -93,12 +93,16 @@ pub const Frame = struct {
 
     /// Deserializes a Frame from a binary format.
     pub fn deserialize(self: *Frame, allocator: std.mem.Allocator, data: []const u8) !void {
-        assert(data.len >= 16 + 4); // Minimum size check
+        assert(data.len >= 8); // Minimum: id_len(4) + schedules_count(4)
 
-        const mutable_data = try allocator.dupe(u8, data);
-        defer allocator.free(mutable_data);
+        // Create a mutable copy for safe reading
+        const data_copy = try allocator.alloc(u8, data.len);
+        defer allocator.free(data_copy);
+        for (data, 0..) |byte, i| {
+            data_copy[i] = byte;
+        }
 
-        var stream = std.io.fixedBufferStream(mutable_data);
+        var stream = std.io.fixedBufferStream(data_copy);
         var br = stream.reader();
 
         // Read ID as length-prefixed string (same as Schedule)

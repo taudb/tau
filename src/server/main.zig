@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+const net = std.net;
 const libtau = @import("libtau");
 const primitives = libtau.primitives;
 const InMemory = libtau.storage.backends.InMemory;
@@ -22,61 +23,42 @@ fn masthead(version: []const u8) void {
     std.debug.print("\nServer v{s} running...\n", .{version});
 }
 
-fn sanity(allocator: std.mem.Allocator) !void {
-    std.debug.print("Running sanity check using in-memory backend...\n", .{});
-
-    // 1. Create example data (Tau, Schedule, Frame)
-    var tau = try primitives.Tau.create(allocator, "+1.5", 1000, 2000);
-    defer (&tau).deinit(allocator);
-    var taus = [_]primitives.Tau{tau};
-    var schedule = try primitives.Schedule.create(allocator, "Test Schedule", taus[0..]);
-    defer (&schedule).deinit(allocator);
-    var schedules = [_]primitives.Schedule{schedule};
-    var frame = try primitives.Frame.create(allocator, schedules[0..]);
-    defer (&frame).deinit(allocator);
-
-    // 2. Initialize in-memory backend and engine
-    var memory_backend = InMemory.init();
-    defer memory_backend.deinit(allocator);
-    var backend = Backend{
-        .backend_type = BackendType.InMemory,
-        .backend = .{ .InMemory = memory_backend },
-    };
-    var engine = Engine.init(allocator, &backend);
-    defer engine.deinit();
-
-    // 3. Serialize Frame, store with engine
-    const frame_serialized = try frame.serialize(allocator);
-    defer allocator.free(frame_serialized);
-    _ = try engine.execute(EngineCommand.Put, frame_serialized);
-    std.debug.print("Frame serialized and stored in engine.\n", .{});
-
-    // 4. Read back & verify roundtrip correctness
-    const maybe_bytes = try engine.execute(EngineCommand.Get, &[_]u8{});
-    if (maybe_bytes) |bytes| {
-        var roundtrip_frame: primitives.Frame = undefined;
-        try roundtrip_frame.deserialize(allocator, bytes);
-        defer (&roundtrip_frame).deinit(allocator);
-        assert(frame.schedules.len == roundtrip_frame.schedules.len);
-        assert(frame.schedules[0].taus.len == roundtrip_frame.schedules[0].taus.len);
-        assert(std.mem.eql(u8, frame.schedules[0].name, roundtrip_frame.schedules[0].name));
-        assert(frame.schedules[0].taus[0].valid_ns == roundtrip_frame.schedules[0].taus[0].valid_ns);
-        assert(frame.schedules[0].taus[0].expiry_ns == roundtrip_frame.schedules[0].taus[0].expiry_ns);
-        assert(std.mem.eql(u8, frame.schedules[0].taus[0].diff, roundtrip_frame.schedules[0].taus[0].diff));
-        std.debug.print("Frame characteristics verified via in-memory roundtrip.\n", .{});
-    } else {
-        std.debug.print("Error: No data read back from engine.\n", .{});
-        return error.NoDataReadBack;
-    }
-
-    std.debug.print("Sanity check complete.\n", .{});
-}
-
 pub fn main() !void {
     masthead("0.1.0");
 
-    const allocator = std.heap.page_allocator;
-    try sanity(allocator);
+    const address = try net.Address.parseIp("127.0.0.1", 8080);
+    var server = try address.listen(.{
+        .reuse_address = true,
+        .kernel_backlog = 128, // backlog: number of pending connections queue
+    });
+    defer server.deinit();
 
-    std.debug.print("\nShutting down gracefully...\n", .{});
+    std.debug.print("Server listening on {d}\n", .{address.getPort()});
+
+    while (true) {
+        const connection = try server.accept();
+        defer connection.stream.close();
+
+        std.debug.print("Accepted connection, port {d}\n", .{connection.address.getPort()});
+
+        handleClient(connection.stream) catch |err| {
+            std.debug.print("Error handling client: {any}\n", .{err}); // Changed {} to {any}
+        };
+    }
+}
+
+fn handleClient(stream: net.Stream) !void {
+    var buffer: [1024]u8 = undefined;
+
+    const bytes_read = try stream.read(&buffer);
+    if (bytes_read == 0) {
+        std.debug.print("Client disconnected\n", .{});
+        return;
+    }
+
+    const received = buffer[0..bytes_read];
+    std.debug.print("Received {d} bytes: {s}\n", .{ bytes_read, received }); // Changed {} to {d}
+
+    // Echo the data back
+    _ = try stream.writeAll(received);
 }

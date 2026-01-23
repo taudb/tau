@@ -7,7 +7,7 @@ const primitives = @import("mod.zig");
 const Tau = primitives.Tau;
 const Schedule = primitives.Schedule;
 const Frame = primitives.Frame;
-const ULID = @import("ulid").ULID;
+const ULID = @import("../ulid/mod.zig").ULID;
 
 /// A lens represents a calculation or transformation identified by a unique id.
 pub const Lens = struct {

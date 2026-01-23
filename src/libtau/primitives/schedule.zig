@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const primitives = @import("mod.zig");
 const Tau = primitives.Tau;
-const ULID = @import("ulid").ULID;
+const ULID = @import("../ulid/mod.zig").ULID;
 
 /// A schedule represents a collection of taus identified by a unique id.
 pub const Schedule = struct {

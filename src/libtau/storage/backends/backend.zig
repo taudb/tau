@@ -16,18 +16,45 @@ pub const Backend = struct {
         InMemory: InMemory,
     },
 
-    pub fn deinit(self: *Backend, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Backend) void {
+        const assert = std.debug.assert;
+        // Pre-condition assertions
+        assert(self != null);
+        assert(@intFromPtr(self) != 0);
+        // Negative space: backend_type should be valid
+        assert(@intFromEnum(self.backend_type) >= 0);
+
         switch (self.backend_type) {
-            .InMemory => self.backend.InMemory.deinit(allocator),
+            .InMemory => {
+                assert(self.backend.InMemory.allocator.ptr != null);
+                self.backend.InMemory.deinit();
+            },
         }
+
+        // Post-condition assertions
+        assert(self != null);
+        assert(@intFromPtr(self) != 0);
     }
 
     /// Create and return the backend instance
-    fn createBackend(backend_type: BackendType) union(BackendType) {
+    fn createBackend(backend_type: BackendType, allocator: std.mem.Allocator) union(BackendType) {
         InMemory: InMemory,
     } {
-        switch (backend_type) {
-            .InMemory => return InMemory.init(),
-        }
+        const assert = std.debug.assert;
+        // Pre-condition assertions
+        assert(allocator.ptr != null);
+        assert(@intFromPtr(allocator) != 0);
+        // Negative space: backend_type should be valid
+        assert(@intFromEnum(backend_type) >= 0);
+
+        const result = switch (backend_type) {
+            .InMemory => InMemory.init(allocator) catch unreachable,
+        };
+
+        // Post-condition assertions
+        assert(result.InMemory.allocator.ptr != null);
+        assert(@intFromPtr(&result) != 0);
+
+        return result;
     }
 };
