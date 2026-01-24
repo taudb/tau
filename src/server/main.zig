@@ -14,7 +14,7 @@ const EngineCommand = libtau.storage.EngineCommand;
 const MAX_THREADS = 8;
 
 fn masthead(version: []const u8) void {
-    std.debug.print("  █████                        \n", .{});
+    std.debug.print("\n  █████                        \n", .{});
     std.debug.print(" ░░███                         \n", .{});
     std.debug.print(" ███████    ██████   █████ ████\n", .{});
     std.debug.print("░░░███░    ░░░░░███ ░░███ ░███ \n", .{});
@@ -105,8 +105,6 @@ fn handleClient(stream: net.Stream) !void {
 
         const received = buffer[0..bytes_read];
         std.debug.print("Received {d} bytes: {s}\n", .{ bytes_read, received });
-
-        // Echo the data back
-        _ = try stream.writeAll(received);
+        try stream.writeAll("received.\n"); // Client
     }
 }

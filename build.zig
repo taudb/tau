@@ -4,11 +4,21 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // ULID module
+    const ulid_mod = b.createModule(.{
+        .root_source_file = b.path("src/libtau/ulid/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // libtau module (root of library code)
     const libtau_mod = b.createModule(.{
         .root_source_file = b.path("src/libtau/mod.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "ulid", .module = ulid_mod },
+        },
     });
 
     // tau main executable

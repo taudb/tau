@@ -7,7 +7,13 @@ const primitives = @import("mod.zig");
 const Tau = primitives.Tau;
 const Schedule = primitives.Schedule;
 const Frame = primitives.Frame;
-const ULID = @import("../ulid/mod.zig").ULID;
+const ULID = @import("ulid").ULID;
+const lens_expr = @import("lens_expression.zig");
+
+/// Errors that can occur during lens evaluation.
+pub const LensError = error{
+    MissingData,
+};
 
 /// A lens represents a calculation or transformation identified by a unique id.
 pub const Lens = struct {
@@ -16,12 +22,16 @@ pub const Lens = struct {
     description: []const u8,
     expression: []const u8,
 
-    /// Frees the heap-allocated strings.
-    pub fn deinit(self: Lens, allocator: std.mem.Allocator) void {
+    // Map variable names to input schedules by name
+    input_schedules: std.StringHashMap(*const Schedule),
+
+    /// Frees heap-allocated strings and map.
+    pub fn deinit(self: *Lens, allocator: std.mem.Allocator) void {
         allocator.free(self.id);
         allocator.free(self.name);
         allocator.free(self.description);
         allocator.free(self.expression);
+        self.input_schedules.deinit();
     }
 
     /// Creates a new Lens with auto-generated ID
@@ -41,6 +51,7 @@ pub const Lens = struct {
             .name = lens_name,
             .description = lens_description,
             .expression = lens_expression,
+            .input_schedules = std.StringHashMap(*const Schedule).init(allocator),
         };
 
         assert(lens.name.len > 0);
@@ -49,79 +60,120 @@ pub const Lens = struct {
         return lens;
     }
 
-    /// Applies the lens transformation to a schedule, creating a new schedule.
-    /// Currently performs identity transform (deep copy) as expression evaluation
-    /// will be implemented by a separate query engine.
-    pub fn applyToSchedule(self: Lens, allocator: Allocator, schedule: Schedule) !Schedule {
+    /// Adds an input schedule to the lens, mapping variable name to schedule.
+    pub fn addInput(self: *Lens, allocator: Allocator, var_name: []const u8, schedule: *const Schedule) !void {
+        try self.input_schedules.put(allocator, var_name, schedule);
+    }
+
+    /// Applies lens transformation across all input schedules, creating a new schedule.
+    /// Aligns taus by time and evaluates expression for each time point.
+    pub fn apply(self: *Lens, allocator: Allocator) !Schedule {
         assert(self.name.len > 0);
         assert(self.expression.len > 0);
-        assert(schedule.taus.len > 0);
+        assert(self.input_schedules.count() > 0);
 
-        const transformed_taus = try self.transformTaus(allocator, schedule.taus);
-        errdefer {
-            for (transformed_taus) |t| t.deinit(allocator);
-            allocator.free(transformed_taus);
+        // Find the schedule with the most taus to determine output size
+        var max_taus: usize = 0;
+        var schedule_iter = self.input_schedules.iterator();
+        while (schedule_iter.next()) |entry| {
+            if (entry.value_ptr.*.taus.len > max_taus) {
+                max_taus = entry.value_ptr.*.taus.len;
+            }
         }
 
-        const new_schedule = try Schedule.create(allocator, self.name, transformed_taus);
+        var output_taus = std.ArrayList(Tau).initCapacity(allocator, max_taus);
+        defer output_taus.deinit();
 
-        for (transformed_taus) |t| t.deinit(allocator);
-        allocator.free(transformed_taus);
+        // Process each time point by index (assume schedules are aligned)
+        for (0..max_taus) |i| {
+            if (try self.processTimePoint(allocator, i)) |tau| {
+                try output_taus.append(allocator, tau);
+            } else |err| switch (err) {
+                error.MissingData => {
+                    // Skip this time point if any input is missing (policy 3)
+                    continue;
+                },
+                else => return err,
+            }
+        }
 
-        assert(new_schedule.name.len > 0);
-        assert(new_schedule.taus.len == schedule.taus.len);
-        assert(std.mem.eql(u8, new_schedule.name, self.name));
-        assert(new_schedule.id != schedule.id);
+        const new_schedule = try Schedule.create(allocator, self.name, output_taus.items);
         return new_schedule;
+    }
+
+    /// Processes a single time point across all input schedules.
+    /// Returns MissingData if any required variable is missing at this time point.
+    fn processTimePoint(self: *const Lens, allocator: Allocator, time_index: usize) !?Tau {
+        var vars = std.ArrayList(lens_expr.Variable).init(allocator);
+        defer vars.deinit();
+
+        // Collect values for all variables in expression
+        var schedule_iter = self.input_schedules.iterator();
+        while (schedule_iter.next()) |entry| {
+            const var_name = entry.key_ptr.*;
+            const schedule = entry.value_ptr.*;
+
+            // Handle special time variables
+            if (std.mem.eql(u8, var_name, "vt")) {
+                // Find a schedule that has time data for vt
+                if (time_index < schedule.taus.len) {
+                    const tau = schedule.taus[time_index];
+                    try vars.append(allocator, .{ .name = var_name, .value = @as(f64, @floatFromInt(tau.valid_ns)) });
+                } else {
+                    return error.MissingData;
+                }
+            } else if (std.mem.eql(u8, var_name, "et")) {
+                if (time_index < schedule.taus.len) {
+                    const tau = schedule.taus[time_index];
+                    try vars.append(allocator, .{ .name = var_name, .value = @as(f64, @floatFromInt(tau.expiry_ns)) });
+                } else {
+                    return error.MissingData;
+                }
+            } else {
+                // Regular variable - get diff value from corresponding schedule
+                if (time_index < schedule.taus.len) {
+                    const tau = schedule.taus[time_index];
+                    try vars.append(allocator, .{ .name = var_name, .value = tau.diff });
+                } else {
+                    return error.MissingData;
+                }
+            }
+        }
+
+        // Evaluate expression
+        const result = try lens_expr.evaluate(self.expression, allocator, vars.items);
+
+        // Create output tau using timing from first input schedule
+        const first_schedule = self.input_schedules.values()[0];
+        if (time_index >= first_schedule.taus.len) {
+            return error.MissingData;
+        }
+
+        const base_tau = first_schedule.taus[time_index];
+        return try Tau.create(allocator, result, base_tau.valid_ns, base_tau.expiry_ns);
     }
 
     /// Applies the lens transformation to a frame, creating a new frame with
     /// all schedules transformed. Each schedule in the frame is transformed
     /// using the lens and added to the new frame.
-    pub fn applyToFrame(self: Lens, allocator: Allocator, frame: Frame) !Frame {
+    pub fn applyToFrame(self: *Lens, allocator: Allocator, frame: Frame) !Frame {
         assert(self.name.len > 0);
-        assert(frame.schedules.len > 0);
+        assert(self.input_schedules.count() > 0);
 
-        const transformed_schedules = try allocator.alloc(Schedule, frame.schedules.len);
-        errdefer {
-            for (transformed_schedules) |s| s.deinit(allocator);
-            allocator.free(transformed_schedules);
-        }
+        // Apply lens once to get transformed schedule
+        const transformed_schedule = try self.apply(allocator);
+        defer transformed_schedule.deinit();
 
-        for (frame.schedules, 0..) |schedule, i| {
-            assert(schedule.taus.len > 0);
-            transformed_schedules[i] = try self.applyToSchedule(allocator, schedule);
-        }
+        // Create new frame with single transformed schedule
+        const transformed_schedules = try allocator.alloc(Schedule, 1);
+        transformed_schedules[0] = transformed_schedule;
 
         const new_frame = try Frame.create(allocator, transformed_schedules);
-
-        for (transformed_schedules) |s| s.deinit(allocator);
         allocator.free(transformed_schedules);
 
-        assert(new_frame.schedules.len == frame.schedules.len);
+        assert(new_frame.schedules.len == 1);
         assert(new_frame.id != frame.id);
         return new_frame;
-    }
-
-    /// Internal helper: Transforms a slice of taus using the lens expression.
-    /// Currently performs identity transform (deep copy) - actual expression
-    /// evaluation will be implemented by a separate query engine.
-    fn transformTaus(_: Lens, allocator: Allocator, taus: []const Tau) ![]Tau {
-        assert(taus.len > 0);
-
-        const result = try allocator.alloc(Tau, taus.len);
-        errdefer {
-            for (result) |t| t.deinit(allocator);
-            allocator.free(result);
-        }
-
-        for (taus, 0..) |tau, i| {
-            assert(tau.diff.len > 0);
-            result[i] = try Tau.create(allocator, tau.diff, tau.valid_ns, tau.expiry_ns);
-        }
-
-        assert(result.len == taus.len);
-        return result;
     }
 };
 

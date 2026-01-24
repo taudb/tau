@@ -4,12 +4,12 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const primitives = @import("mod.zig");
-const ULID = @import("../ulid/mod.zig").ULID;
+const ULID = @import("ulid").ULID;
 
 /// A tau represents the update of a value during a time interval.
 pub const Tau = struct {
     id: []const u8, // Unique identifier (ULID string)
-    diff: []const u8, // The delta/change
+    diff: f64, // The delta/change (numeric value)
     valid_ns: u64, // Start time (since epoch)
     expiry_ns: u64, // End time (since epoch)
 
@@ -19,32 +19,44 @@ pub const Tau = struct {
         return time_ns >= self.valid_ns and time_ns < self.expiry_ns;
     }
 
-    /// Frees the heap-allocated diff string and id.
+    /// Frees heap-allocated id.
     pub fn deinit(self: *Tau, allocator: std.mem.Allocator) void {
         if (self.id.len > 0) allocator.free(self.id);
-        if (self.diff.len > 0) allocator.free(self.diff);
         self.id = &[_]u8{};
-        self.diff = &[_]u8{};
+        self.diff = 0.0;
     }
 
     /// Creates a new Tau with auto-generated ULID
-    pub fn create(allocator: Allocator, diff: []const u8, valid_ns: u64, expiry_ns: u64) !Tau {
-        assert(diff.len > 0); // Diff should not be empty
+    pub fn create(allocator: Allocator, diff: f64, valid_ns: u64, expiry_ns: u64) !Tau {
         assert(expiry_ns > valid_ns); // Invariant: Negative interval not allowed
 
         const ulid = try ULID.create();
         const id = try allocator.dupe(u8, ulid.toString());
-        const tau_diff = try allocator.dupe(u8, diff);
         const result = Tau{
             .id = id,
-            .diff = tau_diff,
+            .diff = diff,
             .valid_ns = valid_ns,
             .expiry_ns = expiry_ns,
         };
 
         assert(result.isValid(valid_ns)); // Newly created tau should be valid at valid_ns
         assert(!result.isValid(expiry_ns)); // Newly created tau should be invalid at expiry_ns
-        assert(result.diff.len > 0); // Diff should not be empty
+        return result;
+    }
+
+    /// Creates multiple Taus with the same time range
+    pub fn createBatch(allocator: Allocator, diffs: []const f64, valid_ns: u64, expiry_ns: u64) ![]Tau {
+        assert(diffs.len > 0); // At least one diff required
+        assert(expiry_ns > valid_ns); // Invariant: Negative interval not allowed
+
+        const result = try allocator.alloc(Tau, diffs.len);
+
+        for (diffs, 0..) |diff, i| {
+            const tau = try Tau.create(allocator, diff, valid_ns, expiry_ns);
+            // Transfer ownership to the batch
+            result[i] = tau;
+        }
+
         return result;
     }
 
@@ -58,9 +70,8 @@ pub const Tau = struct {
         try bw.writeInt(u32, @intCast(self.id.len), .big);
         try bw.writeAll(self.id);
 
-        // Write diff length and diff bytes
-        try bw.writeInt(u32, @intCast(self.diff.len), .big);
-        try bw.writeAll(self.diff);
+        // Write diff as f64
+        try bw.writeInt(f64, self.diff, .big);
 
         // Write valid_ns and expiry_ns
         try bw.writeInt(u64, self.valid_ns, .big);
@@ -73,7 +84,7 @@ pub const Tau = struct {
 
     /// Deserializes a Tau from a binary format.
     pub fn deserialize(self: *Tau, allocator: std.mem.Allocator, data: []const u8) !void {
-        assert(data.len >= 4 + 4 + 8 + 8); // Minimum size check
+        assert(data.len >= 4 + 8 + 8 + 8); // Minimum size check
 
         const mutable_data = try allocator.dupe(u8, data);
         defer allocator.free(mutable_data);
@@ -87,18 +98,14 @@ pub const Tau = struct {
         errdefer allocator.free(id);
         try br.readNoEof(id);
 
-        // Read diff length and diff bytes
-        const diff_len = try br.readInt(u32, .big);
-        const diff = try allocator.alloc(u8, diff_len);
-        errdefer allocator.free(diff);
-        try br.readNoEof(diff);
+        // Read diff as f64
+        const diff = try br.readInt(f64, .big);
 
         // Read valid_ns and expiry_ns
         const valid_ns = try br.readInt(u64, .big);
         const expiry_ns = try br.readInt(u64, .big);
 
         assert(valid_ns < expiry_ns); // Invariant: Negative interval not allowed
-        assert(diff.len > 0); // Diff should not be empty
 
         self.* = Tau{
             .id = id,
@@ -111,17 +118,14 @@ pub const Tau = struct {
 
 test "Serialize & Deserialize Tau" {
     const allocator = std.testing.allocator;
-    const original_diff = "example diff data";
     const id = try allocator.dupe(u8, "01ARYZ6S4100000000000000000");
-    const diff = try allocator.dupe(u8, original_diff);
     const original_tau = Tau{
         .id = id,
-        .diff = diff,
+        .diff = 1.5,
         .valid_ns = 1000,
         .expiry_ns = 2000,
     };
     defer allocator.free(id);
-    defer allocator.free(diff);
 
     const serialized = try original_tau.serialize(allocator);
 
@@ -129,9 +133,8 @@ test "Serialize & Deserialize Tau" {
     try deserialized_tau.deserialize(allocator, serialized);
     defer deserialized_tau.deinit(&deserialized_tau, allocator);
 
-    assert(deserialized_tau.diff.len == original_tau.diff.len);
+    assert(deserialized_tau.diff == original_tau.diff);
     assert(std.mem.eql(u8, deserialized_tau.id, original_tau.id));
-    assert(std.mem.eql(u8, deserialized_tau.diff, original_tau.diff));
     assert(deserialized_tau.valid_ns == original_tau.valid_ns);
     assert(deserialized_tau.expiry_ns == original_tau.expiry_ns);
 
@@ -152,10 +155,10 @@ test "Deserialize invalid data" {
 test "Tau creation with valid parameters" {
     const allocator = std.testing.allocator;
 
-    const tau = try Tau.create(allocator, "+1.5", 1000, 2000);
+    const tau = try Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(&tau, allocator);
 
-    try std.testing.expect(tau.diff.len > 0);
+    try std.testing.expect(tau.diff == 1.5);
     try std.testing.expect(tau.valid_ns == 1000);
     try std.testing.expect(tau.expiry_ns == 2000);
     try std.testing.expect(tau.isValid(1000));
@@ -168,18 +171,15 @@ test "Tau creation with valid parameters" {
 test "Tau creation with invalid parameters" {
     const allocator = std.testing.allocator;
 
-    // Test empty diff
-    try std.testing.expectError(error.AssertFailed, Tau.create(allocator, "", 1000, 2000));
-
     // Test invalid time range (expiry <= valid)
-    try std.testing.expectError(error.AssertFailed, Tau.create(allocator, "+1.0", 2000, 1000));
-    try std.testing.expectError(error.AssertFailed, Tau.create(allocator, "+1.0", 1000, 1000));
+    try std.testing.expectError(error.AssertFailed, Tau.create(allocator, 1.0, 2000, 1000));
+    try std.testing.expectError(error.AssertFailed, Tau.create(allocator, 1.0, 1000, 1000));
 }
 
 test "Tau isValid edge cases" {
     const allocator = std.testing.allocator;
 
-    const tau = try Tau.create(allocator, "-0.5", 1000, 2000);
+    const tau = try Tau.create(allocator, -0.5, 1000, 2000);
     defer tau.deinit(&tau, allocator);
 
     // Test boundary conditions
@@ -197,7 +197,7 @@ test "Tau isValid edge cases" {
 test "Tau batch creation" {
     const allocator = std.testing.allocator;
 
-    const diffs = [_][]const u8{ "+1.0", "-0.5", "+2.5" };
+    const diffs = [_]f64{ 1.0, -0.5, 2.5 };
     const taus = try Tau.createBatch(allocator, &diffs, 1000, 2000);
     defer {
         for (taus) |tau| tau.deinit(&tau, allocator);
@@ -207,7 +207,7 @@ test "Tau batch creation" {
     try std.testing.expect(taus.len == 3);
 
     for (taus, 0..) |tau, i| {
-        try std.testing.expect(std.mem.eql(u8, tau.diff, diffs[i]));
+        try std.testing.expect(tau.diff == diffs[i]);
         try std.testing.expect(tau.valid_ns == 1000);
         try std.testing.expect(tau.expiry_ns == 2000);
         try std.testing.expect(tau.isValid(1500));
@@ -218,48 +218,45 @@ test "Tau batch creation with invalid input" {
     const allocator = std.testing.allocator;
 
     // Test empty diffs array
-    const empty_diffs: []const []const u8 = &[_][]const u8{};
+    const empty_diffs: []const f64 = &[_]f64{};
     try std.testing.expectError(error.AssertFailed, Tau.createBatch(allocator, empty_diffs, 1000, 2000));
 
-    // Test diffs array with empty string
-    const diffs_with_empty = [_][]const u8{ "+1.0", "", "-0.5" };
-    try std.testing.expectError(error.AssertFailed, Tau.createBatch(allocator, &diffs_with_empty, 1000, 2000));
-
     // Test invalid time range
-    const valid_diffs = [_][]const u8{"+1.0"};
+    const valid_diffs = [_]f64{1.0};
     try std.testing.expectError(error.AssertFailed, Tau.createBatch(allocator, &valid_diffs, 2000, 1000));
 }
 
 test "Tau memory management" {
     const allocator = std.testing.allocator;
 
-    var tau = try Tau.create(allocator, "test_diff", 1000, 2000);
+    var tau = try Tau.create(allocator, 3.14159, 1000, 2000);
 
-    // Test that diff is properly allocated and can be modified
-    try std.testing.expect(std.mem.eql(u8, tau.diff, "test_diff"));
+    // Test that diff is properly set
+    try std.testing.expect(tau.diff == 3.14159);
 
     // Test deinit doesn't crash
     tau.deinit(&tau, allocator);
 }
 
-test "Tau diff string handling" {
+test "Tau diff numeric handling" {
     const allocator = std.testing.allocator;
 
-    // Test various diff formats
-    const test_diffs = [_][]const u8{
-        "+1.5",
-        "-0.25",
-        "+0.0",
-        "+123.456",
-        "-999.999",
-        "0", // Note: this might be invalid depending on your domain rules
+    // Test various diff values
+    const test_diffs = [_]f64{
+        1.5,
+        -0.25,
+        0.0,
+        123.456,
+        -999.999,
+        std.math.f64_max,
+        std.math.f64_min,
     };
 
     for (test_diffs) |diff| {
         const tau = try Tau.create(allocator, diff, 1000, 2000);
         defer tau.deinit(&tau, allocator);
 
-        try std.testing.expect(std.mem.eql(u8, tau.diff, diff));
+        try std.testing.expect(tau.diff == diff);
         try std.testing.expect(tau.isValid(1500));
     }
 }
@@ -276,7 +273,7 @@ test "Tau time range validation" {
 
     for (test_cases) |case| {
         if (case.expected_valid) {
-            const tau = try Tau.create(allocator, "+1.0", case.valid, case.expiry);
+            const tau = try Tau.create(allocator, 1.0, case.valid, case.expiry);
             defer tau.deinit(&tau, allocator);
 
             try std.testing.expect(tau.isValid(case.valid));
@@ -288,7 +285,7 @@ test "Tau time range validation" {
 test "Tau invariants and assertions" {
     const allocator = std.testing.allocator;
 
-    const tau = try Tau.create(allocator, "+1.0", 1000, 2000);
+    const tau = try Tau.create(allocator, 1.0, 1000, 2000);
     defer tau.deinit(&tau, allocator);
 
     // Test core invariant: valid_ns < expiry_ns

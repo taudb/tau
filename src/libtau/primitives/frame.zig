@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const primitives = @import("mod.zig");
 const Schedule = primitives.Schedule;
-const ULID = @import("../ulid/mod.zig").ULID;
+const ULID = @import("ulid").ULID;
 
 /// A frame represents a collection of schedules identified by a unique id.
 pub const Frame = struct {
@@ -146,7 +146,7 @@ pub const Frame = struct {
 test "Frame creation with valid parameters" {
     const allocator = std.testing.allocator;
 
-    const tau = try primitives.Tau.create(allocator, "diff1", 1000, 2000);
+    const tau = try primitives.Tau.create(allocator, 1.0, 1000, 2000);
     defer tau.deinit(allocator);
 
     const schedule = try Schedule.create(allocator, "Test Schedule", &[_]primitives.Tau{tau});
@@ -169,7 +169,7 @@ test "Frame creation with invalid parameters" {
 test "Frame deep copy behavior" {
     const allocator = std.testing.allocator;
 
-    const tau = try primitives.Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try primitives.Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     const original_schedule = try Schedule.create(allocator, "Original", &[_]primitives.Tau{tau});
@@ -191,8 +191,8 @@ test "Frame deep copy behavior" {
 test "Frame addSchedules functionality" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try primitives.Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try primitives.Tau.create(allocator, "diff2", 2000, 3000);
+    const tau1 = try primitives.Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try primitives.Tau.create(allocator, 2.5, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
 
@@ -218,7 +218,7 @@ test "Frame addSchedules functionality" {
 test "Frame addSchedules with invalid parameters" {
     const allocator = std.testing.allocator;
 
-    const tau = try primitives.Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try primitives.Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     var frame = try Frame.create(allocator, &[_]Schedule{try Schedule.create(allocator, "Test", &[_]primitives.Tau{tau})});
@@ -231,8 +231,8 @@ test "Frame addSchedules with invalid parameters" {
 test "Frame deinitialization" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try primitives.Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try primitives.Tau.create(allocator, "diff2", 2000, 3000);
+    const tau1 = try primitives.Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try primitives.Tau.create(allocator, 2.5, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
 
@@ -250,7 +250,7 @@ test "Frame deinitialization" {
 test "Frame with multiple addSchedules calls" {
     const allocator = std.testing.allocator;
 
-    const tau = try primitives.Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try primitives.Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     var frame = try Frame.create(allocator, &[_]Schedule{try Schedule.create(allocator, "Initial", &[_]primitives.Tau{tau})});
@@ -269,7 +269,7 @@ test "Frame with multiple addSchedules calls" {
 test "Frame schedule order preservation" {
     const allocator = std.testing.allocator;
 
-    const tau = try primitives.Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try primitives.Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     const schedule1 = try Schedule.create(allocator, "First", &[_]primitives.Tau{tau});
@@ -291,7 +291,7 @@ test "Frame schedule order preservation" {
 test "Frame hierarchical structure validation" {
     const allocator = std.testing.allocator;
 
-    const tau = try primitives.Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try primitives.Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     const schedule = try Schedule.create(allocator, "Parent Schedule", &[_]primitives.Tau{tau});
@@ -303,14 +303,14 @@ test "Frame hierarchical structure validation" {
     // Verify hierarchical structure: Frame -> Schedule -> Tau
     try std.testing.expect(frame.schedules.len == 1);
     try std.testing.expect(frame.schedules[0].taus.len == 1);
-    try std.testing.expect(std.mem.eql(u8, frame.schedules[0].taus[0].diff, "diff"));
+    try std.testing.expect(frame.schedules[0].taus[0].diff == 1.5);
 }
 
 test "Serialize & Deserialize Frame" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try primitives.Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try primitives.Tau.create(allocator, "diff2", 2000, 3000);
+    const tau1 = try primitives.Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try primitives.Tau.create(allocator, 2.5, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
 
@@ -339,7 +339,7 @@ test "Serialize & Deserialize Frame" {
 
         for (deserialized_schedule.taus, 0..) |deserialized_tau, j| {
             try std.testing.expect(std.mem.eql(u8, deserialized_tau.id, original_frame.schedules[i].taus[j].id));
-            try std.testing.expect(std.mem.eql(u8, deserialized_tau.diff, original_frame.schedules[i].taus[j].diff));
+            try std.testing.expect(deserialized_tau.diff == original_frame.schedules[i].taus[j].diff);
             try std.testing.expect(deserialized_tau.valid_ns == original_frame.schedules[i].taus[j].valid_ns);
             try std.testing.expect(deserialized_tau.expiry_ns == original_frame.schedules[i].taus[j].expiry_ns);
         }

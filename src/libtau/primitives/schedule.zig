@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const primitives = @import("mod.zig");
 const Tau = primitives.Tau;
-const ULID = @import("../ulid/mod.zig").ULID;
+const ULID = @import("ulid").ULID;
 
 /// A schedule represents a collection of taus identified by a unique id.
 pub const Schedule = struct {
@@ -167,8 +167,8 @@ pub const Schedule = struct {
 test "Schedule creation with valid parameters" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try Tau.create(allocator, "diff2", 2000, 3000);
+    const tau1 = try Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try Tau.create(allocator, 2.5, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
 
@@ -185,7 +185,7 @@ test "Schedule creation with invalid parameters" {
     const allocator = std.testing.allocator;
 
     // Test empty name
-    const tau = try Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try Tau.create(allocator, 0.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     try std.testing.expectError(error.AssertFailed, Schedule.create(allocator, "", &[_]Tau{tau}));
@@ -207,21 +207,21 @@ test "Schedule deep copy behavior" {
     try std.testing.expect(schedule.taus[0].id != original_tau.id);
 
     // Verify deep copy - same diff content
-    try std.testing.expect(std.mem.eql(u8, schedule.taus[0].diff, original_tau.diff));
+    try std.testing.expect(schedule.taus[0].diff == original_tau.diff);
 }
 
 test "Schedule addTaus functionality" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try Tau.create(allocator, "diff2", 2000, 3000);
+    const tau1 = try Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try Tau.create(allocator, 2.5, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
 
     var schedule = try Schedule.create(allocator, "Test", &[_]Tau{tau1});
     defer schedule.deinit(allocator);
 
-    const new_tau = try Tau.create(allocator, "new_diff", 3000, 4000);
+    const new_tau = try Tau.create(allocator, 3.0, 3000, 4000);
     defer new_tau.deinit(allocator);
 
     const old_len = schedule.taus.len;
@@ -231,13 +231,13 @@ test "Schedule addTaus functionality" {
 
     // Verify deep copy of added tau
     try std.testing.expect(schedule.taus[schedule.taus.len - 1].id != new_tau.id);
-    try std.testing.expect(std.mem.eql(u8, schedule.taus[schedule.taus.len - 1].diff, new_tau.diff));
+    try std.testing.expect(schedule.taus[schedule.taus.len - 1].diff == new_tau.diff);
 }
 
 test "Schedule addTaus with invalid parameters" {
     const allocator = std.testing.allocator;
 
-    const tau = try Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     var schedule = try Schedule.create(allocator, "Test", &[_]Tau{tau});
@@ -250,8 +250,8 @@ test "Schedule addTaus with invalid parameters" {
 test "Schedule deinitialization" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try Tau.create(allocator, "diff2", 2000, 3000);
+    const tau1 = try Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try Tau.create(allocator, 2.5, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
 
@@ -264,7 +264,7 @@ test "Schedule deinitialization" {
 test "Schedule name handling" {
     const allocator = std.testing.allocator;
 
-    const tau = try Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     // Test various name formats
@@ -288,7 +288,7 @@ test "Schedule name handling" {
 test "Schedule with multiple addTaus calls" {
     const allocator = std.testing.allocator;
 
-    const tau = try Tau.create(allocator, "diff", 1000, 2000);
+    const tau = try Tau.create(allocator, 1.5, 1000, 2000);
     defer tau.deinit(allocator);
 
     var schedule = try Schedule.create(allocator, "Test", &[_]Tau{tau});
@@ -296,7 +296,7 @@ test "Schedule with multiple addTaus calls" {
 
     // Add multiple batches
     for (0..5) |i| {
-        const new_tau = try Tau.create(allocator, "new_diff", 1000, 2000);
+        const new_tau = try Tau.create(allocator, 3.0, 1000, 2000);
         defer new_tau.deinit(allocator);
 
         try schedule.addTaus(allocator, &[_]Tau{new_tau});
@@ -307,9 +307,9 @@ test "Schedule with multiple addTaus calls" {
 test "Schedule time range consistency" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try Tau.create(allocator, "diff2", 1500, 2500);
-    const tau3 = try Tau.create(allocator, "diff3", 2000, 3000);
+    const tau1 = try Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try Tau.create(allocator, 2.5, 1500, 2500);
+    const tau3 = try Tau.create(allocator, 3.0, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
     defer tau3.deinit(allocator);
@@ -329,8 +329,8 @@ test "Schedule time range consistency" {
 test "Serialize & Deserialize Schedule" {
     const allocator = std.testing.allocator;
 
-    const tau1 = try Tau.create(allocator, "diff1", 1000, 2000);
-    const tau2 = try Tau.create(allocator, "diff2", 2000, 3000);
+    const tau1 = try Tau.create(allocator, 1.0, 1000, 2000);
+    const tau2 = try Tau.create(allocator, 2.5, 2000, 3000);
     defer tau1.deinit(allocator);
     defer tau2.deinit(allocator);
 
@@ -350,7 +350,7 @@ test "Serialize & Deserialize Schedule" {
 
     for (deserialized_schedule.taus, 0..) |deserialized_tau, i| {
         try std.testing.expect(std.mem.eql(u8, deserialized_tau.id, original_schedule.taus[i].id));
-        try std.testing.expect(std.mem.eql(u8, deserialized_tau.diff, original_schedule.taus[i].diff));
+        try std.testing.expect(deserialized_tau.diff == original_schedule.taus[i].diff);
         try std.testing.expect(deserialized_tau.valid_ns == original_schedule.taus[i].valid_ns);
         try std.testing.expect(deserialized_tau.expiry_ns == original_schedule.taus[i].expiry_ns);
     }
