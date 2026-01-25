@@ -25,7 +25,8 @@ pub const Frame = struct {
         assert(schedules.len > 0); // There should be at least one schedule
 
         const ulid = try ULID.create();
-        const id = try allocator.dupe(u8, ulid.toString());
+        const ulid_string = try ulid.toString(allocator);
+        const id = ulid_string;
         var frame_schedules = try allocator.alloc(Schedule, schedules.len);
         errdefer allocator.free(frame_schedules);
 

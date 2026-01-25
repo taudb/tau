@@ -41,7 +41,7 @@ pub const Lens = struct {
         assert(expression.len > 0);
 
         const ulid = try ULID.create();
-        const id = ulid.toString();
+        const id = try ulid.toString(allocator);
         const lens_name = try allocator.dupe(u8, name);
         const lens_description = try allocator.dupe(u8, description);
         const lens_expression = try allocator.dupe(u8, expression);

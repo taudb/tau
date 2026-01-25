@@ -30,7 +30,8 @@ pub const Schedule = struct {
         assert(taus.len > 0); // There should be at least one tau
 
         const ulid = try ULID.create();
-        const id = try allocator.dupe(u8, ulid.toString());
+        const ulid_string = try ulid.toString(allocator);
+        const id = ulid_string;
         const schedule_name = try allocator.dupe(u8, name);
 
         var schedule_taus = try allocator.alloc(Tau, taus.len);

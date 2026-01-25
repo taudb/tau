@@ -33,24 +33,36 @@ pub const ULID = struct {
     }
 
     /// Encodes the ULID to a 26-character Crockford's Base32 string.
-    pub fn toString(self: ULID) []const u8 {
-        const base32Chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-        var encoded: [26]u8 = undefined;
+    /// Caller must free the returned slice with the provided allocator.
+    pub fn toString(self: ULID, allocator: std.mem.Allocator) ![]const u8 {
+        // Preconditions
+        assert(self.timestamp & 0xFFFF000000000000 == 0); // Ensure upper 16 bits are zero
+        assert(self.randomness.len == 10);
 
+        const result = try allocator.alloc(u8, 26);
+
+        const base32Chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         var value: u128 = (@as(u128, self.timestamp) << 80) | @as(u128, readU80Little(self.randomness));
 
         for (0..26) |i| {
             const index: u8 = @intCast(value & 0x1F);
-            encoded[25 - i] = base32Chars[index];
+            result[25 - i] = base32Chars[index];
             value >>= 5;
         }
 
-        return encoded[0..];
+        // Postconditions
+        assert(result.len == 26);
+        assert(std.mem.indexOfScalar(u8, base32Chars, result[0]) != null); // Check first char is valid
+
+        return result;
     }
 };
 
 fn readU80Little(bytes: [10]u8) u80 {
-    return @as(u80, bytes[0]) |
+    // Preconditions
+    assert(bytes.len == 10);
+
+    const result = @as(u80, bytes[0]) |
         (@as(u80, bytes[1]) << 8) |
         (@as(u80, bytes[2]) << 16) |
         (@as(u80, bytes[3]) << 24) |
@@ -60,19 +72,34 @@ fn readU80Little(bytes: [10]u8) u80 {
         (@as(u80, bytes[7]) << 56) |
         (@as(u80, bytes[8]) << 64) |
         (@as(u80, bytes[9]) << 72);
+
+    // Postconditions
+    assert(result <= std.math.maxInt(u80));
+
+    return result;
 }
 
 test "ULID creation and encoding" {
     const ulid = try ULID.create();
-    const ulidString = ulid.toString();
+    const testing_allocator = std.testing.allocator;
+    const ulidString = try ulid.toString(testing_allocator);
+    defer testing_allocator.free(ulidString);
+
     std.debug.print("Generated ULID: {s}\n", .{ulidString});
     assert(ulidString.len == 26);
 }
 
 test "ULID uniqueness" {
+    const testing_allocator = std.testing.allocator;
     const ulid1 = try ULID.create();
     const ulid2 = try ULID.create();
-    assert(ulid1.toString() != ulid2.toString());
+
+    const str1 = try ulid1.toString(testing_allocator);
+    defer testing_allocator.free(str1);
+    const str2 = try ulid2.toString(testing_allocator);
+    defer testing_allocator.free(str2);
+
+    assert(!std.mem.eql(u8, str1, str2));
 }
 
 test "ULID timestamp correctness" {
