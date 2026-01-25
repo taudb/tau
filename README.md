@@ -78,56 +78,6 @@ A set of schedules that belong together (think: "all sensor data from device A")
 #### **Lens**
 A transformation function applied to a schedule which can act as a view or migration. 
 
-## Getting Started
 
-### Installation
-```bash
-git clone https://github.com/bxrne/tau.git
-cd tau
-zig build
-zig build run  # Starts server on localhost:8080
-```
-
-### Basic Usage
-```zig
-const tau = @import("tau");
-
-// Create a new schedule for temperature readings
-var temp_schedule = try Schedule.create("iot_device_42_temperature");
-
-// Add temperature readings (now with numeric diffs)
-try temp_schedule.addTau(.{
-    .diff = 22.1,  // Base temperature
-    .valid_from = 1705123200,
-    .valid_until = 1705126800
-});
-
-try temp_schedule.addTau(.{
-    .diff = 0.1,    // Temperature increase
-    .valid_from = 1705126800, 
-    .valid_until = 1705130400
-});
-
-// Query state at specific time
-const state = try temp_schedule.getStateAt(1705125000);
-// Returns: 22.1
-
-// Apply a lens for moving average
-const avg_schedule = try temp_schedule.applyLens(moving_average, 5);
-```
-
-### Server Usage
-The tau server provides a network API for remote operations:
-```bash
-# Start server
-zig build run
-
-# Client operations (protocol TBD, planned: HTTP/REST, gRPC)
-curl -X POST http://localhost:8080/schedules \
-  -d '{"name": "sensor_data", "description": "IoT readings"}'
-
-curl -X POST http://localhost:8080/schedules/sensor_data/taus \
-  -d '{"diff": 1.5, "valid_from": 1705123200}'
-```
 
 
