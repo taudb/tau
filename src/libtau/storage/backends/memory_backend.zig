@@ -18,19 +18,21 @@ const KV = struct {
 pub const InMemory = struct {
     kvs: std.StringHashMap([]u8), // HashMap for O(1) lookups
     allocator: Allocator,
+    mutex: std.Thread.Mutex, // For thread safety
 
     pub fn init(allocator: Allocator) !InMemory {
         // Preconditions
-        assert(allocator.ptr != null);
+        // assert(allocator.ptr != null); // Removed: Allocator is not a pointer
         assert(@intFromPtr(allocator.ptr) != 0);
 
         const backend = InMemory{
             .kvs = std.StringHashMap([]u8).init(allocator),
             .allocator = allocator,
+            .mutex = std.Thread.Mutex{},
         };
 
         // Postconditions
-        assert(backend.allocator.ptr != null);
+        // assert(backend.allocator.ptr != null); // Removed: Allocator is not a pointer
         assert(@intFromPtr(backend.allocator.ptr) != 0);
         assert(backend.kvs.count() == 0);
 
@@ -39,7 +41,7 @@ pub const InMemory = struct {
 
     pub fn deinit(self: *InMemory) void {
         // Preconditions
-        assert(self != null);
+        // assert(self != null); // Removed: self is a pointer, can't be null
 
         var iterator = self.kvs.iterator();
         while (iterator.next()) |entry| {
@@ -54,15 +56,16 @@ pub const InMemory = struct {
 
     pub fn write(self: *InMemory, key: ByteSlice, value: ByteSlice) !void {
         // Preconditions
-        assert(self != null);
+        // assert(self != null); // Removed: self is a pointer, can't be null
         assert(key.len > 0);
         assert(value.len > 0);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         // Store key-value in HashMap (O(1) operation)
         const dup_key = try self.allocator.dupe(u8, key);
         const dup_val = try self.allocator.dupe(u8, value);
-        defer self.allocator.free(dup_key);
-        defer self.allocator.free(dup_val);
 
         try self.kvs.put(dup_key, dup_val);
 
@@ -72,8 +75,11 @@ pub const InMemory = struct {
 
     pub fn read(self: *InMemory, key: ByteSlice) ![]u8 {
         // Preconditions
-        assert(self != null);
+        // assert(self != null); // Removed: self is a pointer, can't be null
         assert(key.len > 0);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         if (self.kvs.get(key)) |value| {
             const result = try self.allocator.dupe(u8, value);
@@ -88,8 +94,11 @@ pub const InMemory = struct {
 
     pub fn delete(self: *InMemory, key: ByteSlice) !void {
         // Preconditions
-        assert(self != null);
+        // assert(self != null); // Removed: self is a pointer, can't be null
         assert(key.len > 0);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         if (self.kvs.fetchRemove(key)) |entry| {
             self.allocator.free(entry.key);

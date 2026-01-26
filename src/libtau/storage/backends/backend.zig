@@ -19,20 +19,18 @@ pub const Backend = struct {
     pub fn deinit(self: *Backend) void {
         const assert = std.debug.assert;
         // Pre-condition assertions
-        assert(self != null);
-        assert(@intFromPtr(self) != 0);
-        // Negative space: backend_type should be valid
+        // assert(self != null); // Removed: self is a pointer, can't be null
         assert(@intFromEnum(self.backend_type) >= 0);
 
         switch (self.backend_type) {
             .InMemory => {
-                assert(self.backend.InMemory.allocator.ptr != null);
+                // assert(self.backend.InMemory.allocator.ptr != null); // Removed: Allocator is not a pointer
                 self.backend.InMemory.deinit();
             },
         }
 
         // Post-condition assertions
-        assert(self != null);
+        // assert(self != null); // Removed: self is a pointer, can't be null
         assert(@intFromPtr(self) != 0);
     }
 
@@ -42,8 +40,8 @@ pub const Backend = struct {
     } {
         const assert = std.debug.assert;
         // Pre-condition assertions
-        assert(allocator.ptr != null);
-        assert(@intFromPtr(allocator) != 0);
+        // assert(allocator.ptr != null); // Removed: Allocator is not a pointer
+        assert(@intFromPtr(allocator.ptr) != 0);
         // Negative space: backend_type should be valid
         assert(@intFromEnum(backend_type) >= 0);
 
@@ -52,7 +50,7 @@ pub const Backend = struct {
         };
 
         // Post-condition assertions
-        assert(result.InMemory.allocator.ptr != null);
+        // assert(result.InMemory.allocator.ptr != null); // Removed: Allocator is not a pointer
         assert(@intFromPtr(&result) != 0);
 
         return result;
