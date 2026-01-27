@@ -4,6 +4,7 @@ const std = @import("std");
 const command = @import("../commands/mod.zig");
 const storage_mod = @import("../storage/mod.zig");
 const primitives = @import("../primitives/mod.zig");
+const json_mod = @import("../json.zig");
 const Engine = storage_mod.Engine;
 const EngineCommand = storage_mod.EngineCommand;
 const Schedule = primitives.Schedule;
@@ -108,15 +109,7 @@ pub fn executeCommand(cmd: command.Command, engine: *Engine, allocator: std.mem.
                 }
             }
             // Return as JSON array
-            var json_buf = try std.ArrayList(u8).initCapacity(allocator, 0);
-            defer json_buf.deinit(allocator);
-            try json_buf.append(allocator, '[');
-            for (valid_diffs.items, 0..) |diff, i| {
-                if (i > 0) try json_buf.append(allocator, ',');
-                try std.fmt.format(json_buf.writer(allocator), "{d}", .{diff});
-            }
-            try json_buf.append(allocator, ']');
-            return try allocator.dupe(u8, json_buf.items);
+            return try json_mod.serializeFloatArray(allocator, valid_diffs.items);
         },
         .Post => |post_cmd| {
             // like range but get all valid after ts
@@ -139,15 +132,7 @@ pub fn executeCommand(cmd: command.Command, engine: *Engine, allocator: std.mem.
                 }
             }
             // Return as JSON Array
-            var json_buf = try std.ArrayList(u8).initCapacity(allocator, 0);
-            defer json_buf.deinit(allocator);
-            try json_buf.append(allocator, '[');
-            for (valid_diffs.items, 0..) |diff, i| {
-                if (i > 0) try json_buf.append(allocator, ',');
-                try std.fmt.format(json_buf.writer(allocator), "{d}", .{diff});
-            }
-            try json_buf.append(allocator, ']');
-            return try allocator.dupe(u8, json_buf.items);
+            return try json_mod.serializeFloatArray(allocator, valid_diffs.items);
         },
 
         .Range => |range_cmd| {
@@ -175,17 +160,7 @@ pub fn executeCommand(cmd: command.Command, engine: *Engine, allocator: std.mem.
             }
 
             // Return as JSON array
-            var json_buf = try std.ArrayList(u8).initCapacity(allocator, 0);
-            defer json_buf.deinit(allocator);
-
-            try json_buf.append(allocator, '[');
-            for (valid_diffs.items, 0..) |diff, i| {
-                if (i > 0) try json_buf.append(allocator, ',');
-                try std.fmt.format(json_buf.writer(allocator), "{d}", .{diff});
-            }
-            try json_buf.append(allocator, ']');
-
-            return try allocator.dupe(u8, json_buf.items);
+            return try json_mod.serializeFloatArray(allocator, valid_diffs.items);
         },
         .At => |at_cmd| {
             const key = try makeScheduleKey(at_cmd.name, allocator);
@@ -212,17 +187,7 @@ pub fn executeCommand(cmd: command.Command, engine: *Engine, allocator: std.mem.
             }
 
             // Return as JSON array
-            var json_buf = try std.ArrayList(u8).initCapacity(allocator, 0);
-            defer json_buf.deinit(allocator);
-
-            try json_buf.append(allocator, '[');
-            for (valid_diffs.items, 0..) |diff, i| {
-                if (i > 0) try json_buf.append(allocator, ',');
-                try std.fmt.format(json_buf.writer(allocator), "{d}", .{diff});
-            }
-            try json_buf.append(allocator, ']');
-
-            return try allocator.dupe(u8, json_buf.items);
+            return try json_mod.serializeFloatArray(allocator, valid_diffs.items);
         },
     };
 }
