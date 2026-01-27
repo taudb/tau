@@ -87,6 +87,69 @@ pub fn executeCommand(cmd: command.Command, engine: *Engine, allocator: std.mem.
             _ = result;
             return null;
         },
+        .Pre => |pre_cmd| {
+            // like range but get all valid before ts
+            const key = try makeScheduleKey(pre_cmd.name, allocator);
+            defer allocator.free(key);
+            const existing_data = try engine.execute(.Get, key, "");
+            if (existing_data == null or existing_data.?.len == 0) {
+                return ExecutorError.NonExistent;
+            }
+            defer allocator.free(existing_data.?);
+            var schedule: Schedule = undefined;
+            try schedule.deserialize(allocator, existing_data.?);
+            defer schedule.deinit(allocator);
+            // Collect all diffs valid before ts
+            var valid_diffs = try std.ArrayList(f64).initCapacity(allocator, 0);
+            defer valid_diffs.deinit(allocator);
+            for (schedule.taus) |tau| {
+                if (tau.expiry_ns > pre_cmd.ts) {
+                    try valid_diffs.append(allocator, tau.diff);
+                }
+            }
+            // Return as JSON array
+            var json_buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+            defer json_buf.deinit(allocator);
+            try json_buf.append(allocator, '[');
+            for (valid_diffs.items, 0..) |diff, i| {
+                if (i > 0) try json_buf.append(allocator, ',');
+                try std.fmt.format(json_buf.writer(allocator), "{d}", .{diff});
+            }
+            try json_buf.append(allocator, ']');
+            return try allocator.dupe(u8, json_buf.items);
+        },
+        .Post => |post_cmd| {
+            // like range but get all valid after ts
+            const key = try makeScheduleKey(post_cmd.name, allocator);
+            defer allocator.free(key);
+            const existing_data = try engine.execute(.Get, key, "");
+            if (existing_data == null or existing_data.?.len == 0) {
+                return ExecutorError.NonExistent;
+            }
+            defer allocator.free(existing_data.?);
+            var schedule: Schedule = undefined;
+            try schedule.deserialize(allocator, existing_data.?);
+            defer schedule.deinit(allocator);
+            // Collect all diffs valid after ts
+            var valid_diffs = try std.ArrayList(f64).initCapacity(allocator, 0);
+            defer valid_diffs.deinit(allocator);
+            for (schedule.taus) |tau| {
+                if (tau.valid_ns >= post_cmd.ts) {
+                    try valid_diffs.append(allocator, tau.diff);
+                }
+            }
+            // Return as JSON Array
+            var json_buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+            defer json_buf.deinit(allocator);
+            try json_buf.append(allocator, '[');
+            for (valid_diffs.items, 0..) |diff, i| {
+                if (i > 0) try json_buf.append(allocator, ',');
+                try std.fmt.format(json_buf.writer(allocator), "{d}", .{diff});
+            }
+            try json_buf.append(allocator, ']');
+            return try allocator.dupe(u8, json_buf.items);
+        },
+
         .Range => |range_cmd| {
             const key = try makeScheduleKey(range_cmd.name, allocator);
             defer allocator.free(key);
@@ -163,25 +226,3 @@ pub fn executeCommand(cmd: command.Command, engine: *Engine, allocator: std.mem.
         },
     };
 }
-
-// test "execute create_schedule command" {
-//     const storage = std.testing.allocator; // Placeholder for actual storage engine
-//     const cmd = command.Command{
-//         .CreateSchedule = .{
-//             .name = "meeting",
-//         },
-//     };
-//     const result = try executeCommand(cmd, storage);
-//     try std.testing.expect(result == null);
-// }
-
-// test "execute append command" {
-//     const storage = std.testing.allocator; // Placeholder for actual storage engine
-//     const cmd = command.Command{
-//         .Append = .{
-//             .name = "meeting",
-//             .text = "Discuss project updates",
-//         },
-//     };
-//     try executeCommand(cmd, storage);
-// }

@@ -7,6 +7,8 @@ const CommandType = enum {
     Append,
     Range,
     At,
+    Pre,
+    Post,
 };
 
 pub const Command = union(CommandType) {
@@ -23,6 +25,14 @@ pub const Command = union(CommandType) {
         end_ts: u64,
     },
     At: struct {
+        name: []const u8,
+        ts: u64,
+    },
+    Pre: struct {
+        name: []const u8,
+        ts: u64,
+    },
+    Post: struct {
         name: []const u8,
         ts: u64,
     },
@@ -43,6 +53,8 @@ const CommandMap = [_]struct {
     .{ .name = "append", .tag = .Append },
     .{ .name = "range", .tag = .Range },
     .{ .name = "at", .tag = .At },
+    .{ .name = "pre", .tag = .Pre },
+    .{ .name = "post", .tag = .Post },
 };
 
 fn parseCommandType(s: []const u8) ?CommandType {
@@ -94,6 +106,39 @@ pub fn parseCommand(input: []const u8) ParseError!Command {
                 .Append = .{
                     .name = name,
                     .text = text,
+                },
+            };
+        },
+        .Pre => {
+            if (trimmed_remaining.len == 0) return error.MissingArgs;
+            // Parse: name ts
+            const space = std.mem.indexOfScalar(u8, trimmed_remaining, ' ') orelse return error.MissingArgs;
+            const name = trimmed_remaining[0..space];
+
+            const ts_str = trimmed_remaining[space + 1 ..];
+            if (ts_str.len == 0) return error.MissingArgs;
+
+            const ts = std.fmt.parseInt(u64, ts_str, 10) catch return error.MissingArgs;
+
+            return Command{
+                .Pre = .{
+                    .name = name,
+                    .ts = ts,
+                },
+            };
+        },
+        .Post => {
+            if (trimmed_remaining.len == 0) return error.MissingArgs;
+            // Parse: name ts
+            const space = std.mem.indexOfScalar(u8, trimmed_remaining, ' ') orelse return error.MissingArgs;
+            const name = trimmed_remaining[0..space];
+            const ts_str = trimmed_remaining[space + 1 ..];
+            if (ts_str.len == 0) return error.MissingArgs;
+            const ts = std.fmt.parseInt(u64, ts_str, 10) catch return error.MissingArgs;
+            return Command{
+                .Post = .{
+                    .name = name,
+                    .ts = ts,
                 },
             };
         },
@@ -178,6 +223,45 @@ test "parse at command" {
         .At => |a| {
             try std.testing.expect(std.mem.eql(u8, a.name, "MySchedule"));
             try std.testing.expect(a.ts == 1500);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse append command" {
+    const input = "append MySchedule This is a test note.";
+    const cmd = parseCommand(input) catch unreachable;
+
+    switch (cmd) {
+        .Append => |a| {
+            try std.testing.expect(std.mem.eql(u8, a.name, "MySchedule"));
+            try std.testing.expect(std.mem.eql(u8, a.text, "This is a test note."));
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse pre command" {
+    const input = "pre MySchedule 1200";
+    const cmd = parseCommand(input) catch unreachable;
+
+    switch (cmd) {
+        .Pre => |p| {
+            try std.testing.expect(std.mem.eql(u8, p.name, "MySchedule"));
+            try std.testing.expect(p.ts == 1200);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse post command" {
+    const input = "post MySchedule 1800";
+    const cmd = parseCommand(input) catch unreachable;
+
+    switch (cmd) {
+        .Post => |p| {
+            try std.testing.expect(std.mem.eql(u8, p.name, "MySchedule"));
+            try std.testing.expect(p.ts == 1800);
         },
         else => try std.testing.expect(false),
     }
