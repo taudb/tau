@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      include_optional_tools:
+        description: "Include repl/bench/sim artifacts (server is always included)"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  ZIG_VERSION: 0.15.2
+  INCLUDE_OPTIONAL_TOOLS: ${{ inputs.include_optional_tools || 'true' }}
+
+jobs:
+  build-binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux
+            artifact: tau-x86_64-linux
+          - target: aarch64-linux
+            artifact: tau-aarch64-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build
+        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+      - name: Create release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp zig-out/bin/server dist/
+          if [[ "${INCLUDE_OPTIONAL_TOOLS}" == "true" ]]; then
+            cp zig-out/bin/repl zig-out/bin/bench zig-out/bin/sim dist/
+          fi
+          tar -czf "${{ matrix.artifact }}.tar.gz" -C dist .
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  upload-release-assets:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            tau-x86_64-linux/*.tar.gz
+            tau-aarch64-linux/*.tar.gz
+
+  publish-container:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve image tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "value=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=manual-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build container with Buildah
+        id: build-image
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: tau
+          tags: |
+            ${{ steps.tag.outputs.value }}
+            latest
+          containerfiles: |
+            ./Containerfile
+          build-args: |
+            INCLUDE_OPTIONAL_TOOLS=${{ env.INCLUDE_OPTIONAL_TOOLS }}
+      - name: Login to ghcr.io
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push to ghcr.io
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-image.outputs.image }}
+          tags: ${{ steps.build-image.outputs.tags }}
+          registry: ghcr.io/${{ github.repository_owner }}
