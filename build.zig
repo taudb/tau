@@ -1,0 +1,159 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const mod = b.addModule("tau", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+    });
+
+    const mod_tests = b.addTest(.{
+        .root_module = mod,
+    });
+    const run_mod_tests = b.addRunArtifact(mod_tests);
+
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bench/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "tau", .module = mod },
+            },
+        }),
+    });
+
+    b.installArtifact(bench_exe);
+
+    const bench_step = b.step("bench", "Run benchmarks");
+    const bench_cmd = b.addRunArtifact(bench_exe);
+    bench_step.dependOn(&bench_cmd.step);
+    bench_cmd.step.dependOn(b.getInstallStep());
+
+    const profile_bench_step = b.step("profile_bench", "Profile benchmarks with perf (ReleaseFast)");
+    const profile_bench_cmd = b.addSystemCommand(&.{ "sh", "-c" });
+    profile_bench_cmd.addArg("mkdir -p profiles && ts=$(date +%Y%m%d-%H%M%S) && out=profiles/bench-$ts && mkdir -p \"$out\" && perf record -F 199 -g --call-graph dwarf --output \"$out/perf.data\" -- zig build bench -Doptimize=ReleaseFast && perf report --stdio --input \"$out/perf.data\" > \"$out/report.txt\" && echo \"profile complete: $out\"");
+    profile_bench_step.dependOn(&profile_bench_cmd.step);
+
+    const actor_mod_build = b.addModule("actor", .{
+        .root_source_file = b.path("src/server/actor.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "tau", .module = mod },
+        },
+    });
+
+    const catalog_mod_build = b.addModule("catalog", .{
+        .root_source_file = b.path("src/server/catalog.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "tau", .module = mod },
+            .{ .name = "actor", .module = actor_mod_build },
+        },
+    });
+
+    const protocol_mod_build = b.addModule("protocol", .{
+        .root_source_file = b.path("src/server/protocol.zig"),
+        .target = target,
+    });
+
+    const metrics_mod_build = b.addModule("metrics", .{
+        .root_source_file = b.path("src/server/metrics_server.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "tau", .module = mod },
+            .{ .name = "catalog", .module = catalog_mod_build },
+            .{ .name = "protocol", .module = protocol_mod_build },
+        },
+    });
+
+    const server_exe = b.addExecutable(.{
+        .name = "server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/server/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "tau", .module = mod },
+                .{ .name = "catalog", .module = catalog_mod_build },
+                .{ .name = "metrics", .module = metrics_mod_build },
+                .{ .name = "protocol", .module = protocol_mod_build },
+            },
+        }),
+    });
+
+    b.installArtifact(server_exe);
+
+    const serve_step = b.step("server", "Run the database server");
+    const serve_cmd = b.addRunArtifact(server_exe);
+    serve_step.dependOn(&serve_cmd.step);
+    serve_cmd.step.dependOn(b.getInstallStep());
+
+    const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(&run_mod_tests.step);
+    const server_tests = b.addTest(.{
+        .root_module = server_exe.root_module,
+    });
+    const run_server_tests = b.addRunArtifact(server_tests);
+    test_step.dependOn(&run_server_tests.step);
+
+    const sim_exe = b.addExecutable(.{
+        .name = "sim",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/sim/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "tau", .module = mod },
+                .{ .name = "catalog", .module = catalog_mod_build },
+                .{ .name = "metrics", .module = metrics_mod_build },
+                .{ .name = "protocol", .module = protocol_mod_build },
+            },
+        }),
+    });
+
+    b.installArtifact(sim_exe);
+    const sim_step = b.step("sim", "Run the simulator");
+    const sim_cmd = b.addRunArtifact(sim_exe);
+    sim_step.dependOn(&sim_cmd.step);
+    sim_cmd.step.dependOn(b.getInstallStep());
+
+    const profile_sim_step = b.step("profile_sim", "Profile simulation with perf (ReleaseFast)");
+    const profile_sim_cmd = b.addSystemCommand(&.{ "sh", "-c" });
+    profile_sim_cmd.addArg("mkdir -p profiles && ts=$(date +%Y%m%d-%H%M%S) && out=profiles/sim-$ts && mkdir -p \"$out\" && perf record -F 199 -g --call-graph dwarf --output \"$out/perf.data\" -- zig build sim -Doptimize=ReleaseFast && perf report --stdio --input \"$out/perf.data\" > \"$out/report.txt\" && echo \"profile complete: $out\"");
+    profile_sim_step.dependOn(&profile_sim_cmd.step);
+
+    const sim_tests = b.addTest(.{
+        .root_module = sim_exe.root_module,
+    });
+    const run_sim_tests = b.addRunArtifact(sim_tests);
+    test_step.dependOn(&run_sim_tests.step);
+
+    const repl_exe = b.addExecutable(.{
+        .name = "repl",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/repl/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "tau", .module = mod },
+                .{ .name = "protocol", .module = protocol_mod_build },
+            },
+        }),
+    });
+
+    b.installArtifact(repl_exe);
+
+    const repl_step = b.step("repl", "Run the Tau REPL client");
+    const repl_cmd = b.addRunArtifact(repl_exe);
+    repl_step.dependOn(&repl_cmd.step);
+    repl_cmd.step.dependOn(b.getInstallStep());
+
+    const profile_server_step = b.step("profile_server", "Profile server with perf (ReleaseFast)");
+    const profile_server_cmd = b.addSystemCommand(&.{ "sh", "-c" });
+    profile_server_cmd.addArg("mkdir -p profiles && ts=$(date +%Y%m%d-%H%M%S) && out=profiles/server-$ts && mkdir -p \"$out\" && zig build -Doptimize=ReleaseFast && perf record -F 199 -g --call-graph dwarf --output \"$out/perf.data\" -- zig-out/bin/server && perf report --stdio --input \"$out/perf.data\" > \"$out/report.txt\" && echo \"profile complete: $out\"");
+    profile_server_step.dependOn(&profile_server_cmd.step);
+}
