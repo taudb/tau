@@ -1,6 +1,19 @@
 # Benchmarks
 
-Benchmark framework for Tau. Measures wall-clock time and system resource usage (via `getrusage(2)`, mirroring `time(1)`) per scenario.
+Benchmark framework for Tau. Measures wall-clock time and system resource usage (via `getrusage(2)`) per scenario.
+
+## Configuration
+
+Benchmark constants are in `src/config.zig`:
+
+```zig
+pub const benchmark = struct {
+    pub const default_iterations: u32 = 100;
+    pub const ingest_point_count: u32 = 100_000;
+    pub const query_count: u32 = 10_000;
+    pub const auth_verify_count: u32 = 100_000;
+};
+```
 
 ## Usage
 
@@ -31,7 +44,7 @@ src/bench/
 ├── harness.zig   # Reusable runner: Scenario, Result, resource sampling.
 ├── core.zig      # Core scenarios: ingest, point query, lens query.
 ├── server.zig    # Server scenarios: protocol, auth.
-├── main.zig      # Entry point: collects and runs all scenario modules.
+├── main.zig      # Entry point.
 └── README.md
 ```
 

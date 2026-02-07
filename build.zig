@@ -59,4 +59,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_server_tests = b.addRunArtifact(server_tests);
     test_step.dependOn(&run_server_tests.step);
+
+    const sim_exe = b.addExecutable(.{
+        .name = "sim",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/sim/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "tau", .module = mod },
+            },
+        }),
+    });
+
+    b.installArtifact(sim_exe);
+    const sim_step = b.step("sim", "Run the simulator");
+    const sim_cmd = b.addRunArtifact(sim_exe);
+    sim_step.dependOn(&sim_cmd.step);
+    sim_cmd.step.dependOn(b.getInstallStep());
 }
