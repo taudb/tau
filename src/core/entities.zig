@@ -203,8 +203,6 @@ pub fn Lens(comptime Out: type) type {
     };
 }
 
-// --- Tests. ---
-
 const testing = std.testing;
 
 const blank_label: [32]u8 = [_]u8{0} ** 32;

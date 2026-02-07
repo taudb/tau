@@ -113,8 +113,6 @@ pub fn Segment(comptime T: type) type {
     };
 }
 
-// --- Tests. ---
-
 const testing = std.testing;
 
 test "Segment.init creates empty segment" {

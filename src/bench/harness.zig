@@ -19,8 +19,6 @@ const linux = std.os.linux;
 
 const log = std.log.scoped(.bench);
 
-// --- Resource sampling via getrusage(2). ---
-
 const ResourceSnapshot = struct {
     user_time_us: i64,
     system_time_us: i64,
@@ -85,8 +83,6 @@ pub const ResourceDelta = struct {
     }
 };
 
-// --- Result and Scenario. ---
-
 pub const Result = struct {
     name: []const u8,
     iterations: u64,
@@ -107,8 +103,6 @@ pub const Scenario = struct {
     iterations: u64,
     run_fn: *const fn (std.mem.Allocator) anyerror!void,
 };
-
-// --- Runner. ---
 
 fn make_failed_result(
     name: []const u8,

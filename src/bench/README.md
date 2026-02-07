@@ -30,25 +30,28 @@ Each scenario reports:
 src/bench/
 ├── harness.zig   # Reusable runner: Scenario, Result, resource sampling.
 ├── core.zig      # Core scenarios: ingest, point query, lens query.
+├── server.zig    # Server scenarios: protocol, auth.
 ├── main.zig      # Entry point: collects and runs all scenario modules.
 └── README.md
 ```
 
 ## Adding a scenario module
 
-1. Create a new file, e.g. `src/bench/protocol.zig`.
+1. Create a new file, e.g. `src/bench/wire.zig`.
 2. Import the harness and define scenario functions:
 
 ```zig
+const std = @import("std");
 const harness = @import("harness.zig");
 
 fn my_scenario(allocator: std.mem.Allocator) !void {
+    _ = allocator;
     // ...
 }
 
 pub const scenarios = [_]harness.Scenario{
     .{
-        .name = "protocol/my_scenario",
+        .name = "wire/my_scenario",
         .iterations = 100,
         .run_fn = my_scenario,
     },
@@ -59,8 +62,17 @@ pub const scenarios = [_]harness.Scenario{
 
 ## Current scenarios
 
+### Core
+
 | Name | What it measures |
 |---|---|
 | `core/ingest_throughput` | Append 100k points to a Series. |
 | `core/point_query` | 10k random point lookups via binary search. |
 | `core/lens_query` | 10k random lookups through a Lens transform. |
+
+### Server
+
+| Name | What it measures |
+|---|---|
+| `server/protocol_roundtrip` | Encode and decode protocol headers across all opcodes. |
+| `server/auth_verify` | 100k constant-time certificate comparisons. |
