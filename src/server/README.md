@@ -2,44 +2,44 @@
 
 TCP database server for Tau. Speaks a custom binary protocol over the wire.
 
+## Configuration
+
+All configuration is in `src/config.zig`:
+
+```zig
+pub const server = struct {
+    pub const port: u16 = 7701;
+    pub const address: [4]u8 = .{ 127, 0, 0, 1 };
+    pub const certificate: [32]u8 = .{ ... };  // 32-byte pre-shared key
+    pub const max_connections: u32 = 1024;
+    pub const connection_timeout_ms: u32 = 30_000;
+    pub const max_payload_bytes: u32 = 1024 * 1024;
+    pub const catalog_capacity: u32 = 10_000;
+};
+```
+
+**Important**: Change the certificate before production use. The default certificate is for development only.
+
 ## Modules
 
 | File | Purpose |
 |---|---|
 | `protocol.zig` | Wire format: 10-byte header, opcodes, status codes. |
 | `auth.zig` | Pre-shared certificate authentication, session lifecycle. |
-| `catalog.zig` | Thread-safe series registry with RwLock (readers concurrent, writers exclusive). |
+| `catalog.zig` | Thread-safe series registry with RwLock. |
 | `handler.zig` | Per-connection request dispatch. |
 | `listener.zig` | TCP accept loop, spawns a thread per connection. |
 | `main.zig` | Entry point. |
 
 ## Running
 
-Generate a 32-byte certificate (64 hex characters):
-
-```sh
-export TAU_CERTIFICATE=$(head -c 32 /dev/urandom | xxd -p -c 64)
-```
-
-Start the server:
-
 ```sh
 zig build server
 ```
 
-The server listens on `127.0.0.1:7701` by default.
+Listens on the configured address and port (default: `127.0.0.1:7701`).
 
-## Connecting from Linux
-
-Any TCP client that speaks the binary protocol can connect. A minimal session using `socat` or a custom client:
-
-1. Open a TCP connection to `127.0.0.1:7701`.
-2. Send a CONNECT frame (opcode `0x01`) with the 32-byte certificate as payload.
-3. On success, the server responds with an OK frame (opcode `0xF0`).
-4. Send commands (CREATE_SERIES, APPEND, QUERY_POINT, PING).
-5. Send DISCONNECT (opcode `0x02`) to close gracefully.
-
-### Wire format
+## Wire format
 
 ```
 Offset  Size  Field
@@ -51,7 +51,7 @@ Offset  Size  Field
 10      N     Payload
 ```
 
-### Opcodes
+## Opcodes
 
 | Code | Name | Payload (request) | Payload (response) |
 |---|---|---|---|
@@ -66,12 +66,18 @@ Offset  Size  Field
 | `0xF0` | OK | varies | — |
 | `0xFF` | ERR | 1-byte status code | — |
 
-### Example: raw connect with Python
+## Example: raw connect with Python
 
 ```python
 import socket, struct
 
-cert = bytes.fromhex("your_64_hex_char_certificate_here")
+# Get certificate from config.zig (convert hex bytes to bytes)
+cert = bytes([
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+])
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect(("127.0.0.1", 7701))
