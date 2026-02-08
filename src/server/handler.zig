@@ -5,9 +5,10 @@
 //! dispatches to the catalog, and writes responses.
 
 const std = @import("std");
-const protocol = @import("protocol.zig");
+const protocol = @import("protocol");
 const auth_mod = @import("auth.zig");
-const catalog_mod = @import("catalog.zig");
+const catalog_mod = @import("catalog");
+const metrics_mod = @import("metrics");
 
 const Header = protocol.Header;
 const Opcode = protocol.Opcode;
@@ -20,6 +21,7 @@ pub const Handler = struct {
     catalog: *catalog_mod.Catalog,
     session: auth_mod.Session,
     server_certificate: *const [auth_mod.certificate_length]u8,
+    counters: *metrics_mod.Counters,
 
     const Self = @This();
 
@@ -28,12 +30,14 @@ pub const Handler = struct {
         address: std.net.Address,
         catalog: *catalog_mod.Catalog,
         server_certificate: *const [auth_mod.certificate_length]u8,
+        counters: *metrics_mod.Counters,
     ) Self {
         return .{
             .stream = stream,
             .catalog = catalog,
             .session = auth_mod.Session.init(address),
             .server_certificate = server_certificate,
+            .counters = counters,
         };
     }
 
@@ -59,6 +63,7 @@ pub const Handler = struct {
                     error.BadOpcode => StatusCode.bad_opcode,
                     error.PayloadTooLarge => StatusCode.payload_too_large,
                 };
+                self.counters.inc_error(status);
                 try self.send_error(status);
                 return;
             };
@@ -69,6 +74,8 @@ pub const Handler = struct {
                 self.read_exact(payload_slice) catch return;
             }
             const payload = payload_buffer[0..header.payload_length];
+
+            self.counters.inc_request(header.opcode);
 
             if (header.opcode == .disconnect) {
                 self.session.disconnect();
@@ -82,6 +89,7 @@ pub const Handler = struct {
             }
 
             if (!self.session.authenticated) {
+                self.counters.inc_error(.not_authenticated);
                 try self.send_error(.not_authenticated);
                 return;
             }
@@ -99,6 +107,7 @@ pub const Handler = struct {
 
     fn handle_connect(self: *Self, payload: []const u8) !void {
         if (payload.len != auth_mod.certificate_length) {
+            self.counters.inc_error(.invalid_payload);
             try self.send_error(.invalid_payload);
             return;
         }
@@ -110,6 +119,7 @@ pub const Handler = struct {
             client_cert,
             self.server_certificate,
         ) catch {
+            self.counters.inc_error(.auth_failed);
             try self.send_error(.auth_failed);
             return;
         };
@@ -123,6 +133,7 @@ pub const Handler = struct {
 
     fn handle_create(self: *Self, payload: []const u8) !void {
         if (payload.len != catalog_mod.label_length) {
+            self.counters.inc_error(.invalid_payload);
             try self.send_error(.invalid_payload);
             return;
         }
@@ -135,6 +146,7 @@ pub const Handler = struct {
                 error.SeriesAlreadyExists => .series_already_exists,
                 else => .internal_error,
             };
+            self.counters.inc_error(status);
             try self.send_error(status);
             return;
         };
@@ -144,6 +156,7 @@ pub const Handler = struct {
 
     fn handle_drop(self: *Self, payload: []const u8) !void {
         if (payload.len != catalog_mod.label_length) {
+            self.counters.inc_error(.invalid_payload);
             try self.send_error(.invalid_payload);
             return;
         }
@@ -152,6 +165,7 @@ pub const Handler = struct {
             payload[0..catalog_mod.label_length].*;
 
         self.catalog.drop_series(label) catch {
+            self.counters.inc_error(.series_not_found);
             try self.send_error(.series_not_found);
             return;
         };
@@ -164,6 +178,7 @@ pub const Handler = struct {
 
     fn handle_append(self: *Self, payload: []const u8) !void {
         if (payload.len != append_payload_length) {
+            self.counters.inc_error(.invalid_payload);
             try self.send_error(.invalid_payload);
             return;
         }
@@ -188,6 +203,7 @@ pub const Handler = struct {
                 error.OutOfOrder => .out_of_order,
                 else => .internal_error,
             };
+            self.counters.inc_error(status);
             try self.send_error(status);
             return;
         };
@@ -204,6 +220,7 @@ pub const Handler = struct {
         payload: []const u8,
     ) !void {
         if (payload.len != query_payload_length) {
+            self.counters.inc_error(.invalid_payload);
             try self.send_error(.invalid_payload);
             return;
         }
@@ -221,6 +238,7 @@ pub const Handler = struct {
             label,
             timestamp,
         ) catch {
+            self.counters.inc_error(.series_not_found);
             try self.send_error(.series_not_found);
             return;
         };
