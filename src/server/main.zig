@@ -10,6 +10,7 @@ const config = tau.config;
 
 const listener_mod = @import("listener.zig");
 const auth_mod = @import("auth.zig");
+const metrics_mod = @import("metrics");
 
 const log = std.log.scoped(.server);
 
@@ -50,6 +51,24 @@ pub fn main() !void {
         },
     );
     defer server.deinit();
+
+    var metrics_server: ?metrics_mod.MetricsServer = null;
+    if (config.metrics.enabled) {
+        log.info("starting metrics server on {d}.{d}.{d}.{d}:{d}", .{
+            config.metrics.address[0],
+            config.metrics.address[1],
+            config.metrics.address[2],
+            config.metrics.address[3],
+            config.metrics.port,
+        });
+
+        metrics_server = metrics_mod.MetricsServer.init(
+            &server.counters,
+            &server.catalog,
+        );
+        try metrics_server.?.start();
+    }
+    defer if (metrics_server) |*ms| ms.deinit();
 
     try server.start();
 }

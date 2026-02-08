@@ -214,6 +214,13 @@ pub const time = struct {
     pub const ns_per_century: i64 = 100 * ns_per_year;
 };
 
+// Metrics Server
+pub const metrics = struct {
+    pub const enabled: bool = true;
+    pub const port: u16 = 7702;
+    pub const address: [4]u8 = .{ 127, 0, 0, 1 };
+};
+
 // Compile-Time Validation
 
 comptime {
@@ -251,6 +258,17 @@ comptime {
     // Time validation.
     assert(time.ns_per_sec == 1_000_000_000);
     assert(time.ns_per_day == 86_400_000_000_000);
+
+    // Metrics validation.
+    assert(metrics.port > 0);
+    assert(metrics.port < 65535);
+    assert(metrics.port != server.port);
+
+    // Bench validation.
+    assert(benchmark.default_iterations > 0);
+    assert(benchmark.ingest_point_count > 0);
+    assert(benchmark.query_count > 0);
+    assert(benchmark.auth_verify_count > 0);
 }
 
 // Tests
@@ -280,4 +298,22 @@ test "time constants are correct" {
     try std.testing.expectEqual(@as(i64, 1_000_000_000), time.ns_per_sec);
     try std.testing.expectEqual(@as(i64, 60_000_000_000), time.ns_per_min);
     try std.testing.expectEqual(@as(i64, 3_600_000_000_000), time.ns_per_hour);
+}
+
+test "storage config is valid" {
+    try std.testing.expect(storage.segment_capacity_default <= storage.segment_capacity_max);
+    try std.testing.expect(storage.label_length == 32);
+}
+
+test "benchmark config is valid" {
+    try std.testing.expect(benchmark.default_iterations > 0);
+    try std.testing.expect(benchmark.ingest_point_count > 0);
+    try std.testing.expect(benchmark.query_count > 0);
+    try std.testing.expect(benchmark.auth_verify_count > 0);
+}
+
+test "metrics config is valid" {
+    try std.testing.expect(metrics.enabled == true);
+    try std.testing.expect(metrics.port > 0);
+    try std.testing.expect(metrics.port < 65535);
 }

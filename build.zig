@@ -33,6 +33,29 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&bench_cmd.step);
     bench_cmd.step.dependOn(b.getInstallStep());
 
+    const catalog_mod_build = b.addModule("catalog", .{
+        .root_source_file = b.path("src/server/catalog.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "tau", .module = mod },
+        },
+    });
+
+    const protocol_mod_build = b.addModule("protocol", .{
+        .root_source_file = b.path("src/server/protocol.zig"),
+        .target = target,
+    });
+
+    const metrics_mod_build = b.addModule("metrics", .{
+        .root_source_file = b.path("src/server/metrics_server.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "tau", .module = mod },
+            .{ .name = "catalog", .module = catalog_mod_build },
+            .{ .name = "protocol", .module = protocol_mod_build },
+        },
+    });
+
     const server_exe = b.addExecutable(.{
         .name = "server",
         .root_module = b.createModule(.{
@@ -41,6 +64,9 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "tau", .module = mod },
+                .{ .name = "catalog", .module = catalog_mod_build },
+                .{ .name = "metrics", .module = metrics_mod_build },
+                .{ .name = "protocol", .module = protocol_mod_build },
             },
         }),
     });
@@ -68,6 +94,9 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "tau", .module = mod },
+                .{ .name = "catalog", .module = catalog_mod_build },
+                .{ .name = "metrics", .module = metrics_mod_build },
+                .{ .name = "protocol", .module = protocol_mod_build },
             },
         }),
     });
@@ -77,4 +106,10 @@ pub fn build(b: *std.Build) void {
     const sim_cmd = b.addRunArtifact(sim_exe);
     sim_step.dependOn(&sim_cmd.step);
     sim_cmd.step.dependOn(b.getInstallStep());
+
+    const sim_tests = b.addTest(.{
+        .root_module = sim_exe.root_module,
+    });
+    const run_sim_tests = b.addRunArtifact(sim_tests);
+    test_step.dependOn(&run_sim_tests.step);
 }

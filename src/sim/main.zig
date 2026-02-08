@@ -8,6 +8,7 @@ const config = tau.config;
 
 const Harness = @import("harness.zig").Harness;
 const ScenarioConfig = @import("harness.zig").ScenarioConfig;
+const o11y = @import("scenarios/o11y.zig");
 
 const log = std.log.scoped(.sim);
 

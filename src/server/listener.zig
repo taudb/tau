@@ -3,8 +3,9 @@
 
 const std = @import("std");
 const handler_mod = @import("handler.zig");
-const catalog_mod = @import("catalog.zig");
+const catalog_mod = @import("catalog");
 const auth_mod = @import("auth.zig");
+const metrics_mod = @import("metrics");
 
 const log = std.log.scoped(.listener);
 
@@ -18,6 +19,7 @@ pub const Listener = struct {
     config: Config,
     catalog: catalog_mod.Catalog,
     server: ?std.net.Server,
+    counters: metrics_mod.Counters,
 
     const Self = @This();
 
@@ -29,6 +31,7 @@ pub const Listener = struct {
             .config = config,
             .catalog = catalog_mod.Catalog.init(allocator),
             .server = null,
+            .counters = metrics_mod.Counters.init(),
         };
     }
 
@@ -99,6 +102,9 @@ pub const Listener = struct {
         stream: std.net.Stream,
         address: std.net.Address,
     ) void {
+        self.counters.connection_opened();
+        defer self.counters.connection_closed();
+
         log.info("connection accepted", .{});
 
         var handler = handler_mod.Handler.init(
@@ -106,6 +112,7 @@ pub const Listener = struct {
             address,
             &self.catalog,
             &self.config.certificate,
+            &self.counters,
         );
         handler.run();
 
