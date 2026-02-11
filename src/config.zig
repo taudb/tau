@@ -199,6 +199,12 @@ pub const storage = struct {
 
     /// Series label length in bytes.
     pub const label_length: u32 = 32;
+
+    /// Skip list maximum level (log2 of segment_capacity_max).
+    pub const skip_list_max_level: u32 = 20;
+
+    /// Skip list file header size in bytes (page-aligned).
+    pub const skip_list_header_size: u32 = 4096;
 };
 
 // Time Constants
@@ -254,6 +260,10 @@ comptime {
     assert(storage.segment_capacity_default > 0);
     assert(storage.segment_capacity_default <= storage.segment_capacity_max);
     assert(storage.label_length == 32);
+    assert(storage.skip_list_max_level > 0);
+    assert(storage.skip_list_max_level <= 32);
+    assert(storage.skip_list_header_size >= 4096);
+    assert(storage.skip_list_header_size % 4096 == 0);
 
     // Time validation.
     assert(time.ns_per_sec == 1_000_000_000);
@@ -303,6 +313,8 @@ test "time constants are correct" {
 test "storage config is valid" {
     try std.testing.expect(storage.segment_capacity_default <= storage.segment_capacity_max);
     try std.testing.expect(storage.label_length == 32);
+    try std.testing.expect(storage.skip_list_max_level == 20);
+    try std.testing.expect(storage.skip_list_header_size == 4096);
 }
 
 test "benchmark config is valid" {
