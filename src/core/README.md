@@ -11,6 +11,8 @@ pub const storage = struct {
     pub const segment_capacity_max: u32 = 1 << 20;
     pub const segment_capacity_default: u32 = 1024;
     pub const label_length: u32 = 32;
+    pub const skip_list_max_level: u32 = 20;
+    pub const skip_list_header_size: u32 = 4096;
 };
 ```
 
@@ -20,10 +22,13 @@ pub const storage = struct {
 |---|---|
 | `entities.zig` | `Timestamp`, `TimeDomain`, `Series(T)`, `Lens(In, Out)`. |
 | `storage.zig` | `Segment(T)`: columnar, append-only, sorted storage block. |
+| `skip_list.zig` | `FileBackedSkipList(T)`: file-backed skip list segment. |
 
 ## Data model
 
 A `Series(T)` is a partial function from timestamps to values — see [MATHS.md](../../MATHS.md). It is backed by one or more `Segment` blocks, each holding a contiguous pair of timestamp and value columns. Segments are append-only and enforce strict monotonic timestamp ordering. Point lookups use binary search within segments (O(log n) per segment).
+
+A `FileBackedSkipList(T)` is a file-backed alternative to `Segment(T)`. It stores nodes in a skip list on disk with a checksummed header and fixed-size nodes. Lookups are O(log n) via skip list traversal. Data persists across process restarts. On open, skip list pointers are rebuilt from the authoritative node array prefix for crash tolerance.
 
 A `Lens(In, Out)` is a lazy, zero-copy transformation over a Series. Lenses compose via standard function composition and preserve null (⊥) propagation. They hold a pointer to their source and evaluate on each lookup — no data is materialised.
 
@@ -33,3 +38,5 @@ A `Lens(In, Out)` is a lazy, zero-copy transformation over a Series. Lenses comp
 - `Series.domain` always reflects the range of stored timestamps.
 - Lens lookups never interpolate; unstored timestamps return null.
 - Segment count never exceeds `segment_capacity_max`.
+- Skip list file header checksum is validated on every open.
+- Skip list pointers are rebuilt on open for crash recovery.
