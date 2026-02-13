@@ -81,15 +81,46 @@ fn run_mode(harness: *Harness, count: u32, mode: config.simulation.Mode) void {
 
         const result = harness.run_scenario(scenario_config);
 
-        log.info("[{d}/{d}] seed={d}: {s}, {d} ops, {d} years, {d} faults, {d}ms", .{
+        const ops_sec = if (result.duration_ns != 0) result.operations_executed * 1_000_000_000 / result.duration_ns else 0;
+        const outcome = if (result.passed) "PASS" else "FAIL";
+        // SI formatting
+        var ops_si_buf: [32]u8 = undefined;
+        const ops_si = if (ops_sec >= 1_000_000)
+            std.fmt.bufPrint(&ops_si_buf, "{d} Mops/s", .{ops_sec / 1_000_000}) catch "???"
+        else if (ops_sec >= 1_000)
+            std.fmt.bufPrint(&ops_si_buf, "{d} kops/s", .{ops_sec / 1_000}) catch "???"
+        else
+            std.fmt.bufPrint(&ops_si_buf, "{d} ops/s", .{ops_sec}) catch "???";
+
+        log.info("[{d}/{d}] seed={d}: {s}, {d} ops, {d} years, {s}, {d} faults, {d}ms", .{
             i + 1,
             count,
             result.seed,
-            if (result.passed) "pass" else "FAIL",
+            outcome,
             result.operations_executed,
             result.simulated_years,
+            ops_si,
             result.faults_injected,
             result.duration_ns / 1_000_000,
+        });
+        log.info("Faults: storage_read={d}, storage_write={d}, bitflip={d}, lost_write={d}, gray_failure={d}, network_drop={d}, network_reorder={d}, network_duplicate={d}, network_corrupt={d}, network_delay={d}, mem_corruption={d}, alloc_fail={d}, clock_skew={d}", .{
+            result.faults.storage_read_errors,
+            result.faults.storage_write_errors,
+            result.faults.storage_bitflips,
+            result.faults.storage_lost_writes,
+            result.faults.storage_gray_failures,
+            result.faults.network_drops,
+            result.faults.network_reorders,
+            result.faults.network_duplicates,
+            result.faults.network_corruptions,
+            result.faults.network_delays,
+            result.faults.memory_corruptions,
+            result.faults.memory_alloc_failures,
+            result.faults.clock_skews,
+        });
+        log.info("Outcome: {s}, invariant violations: {d}", .{
+            outcome,
+            result.invariant_violations,
         });
 
         if (!result.passed) {

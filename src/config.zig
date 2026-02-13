@@ -47,7 +47,7 @@ pub const simulation = struct {
     pub const default_seed: u64 = 0;
 
     /// Default number of scenarios to run.
-    pub const default_scenarios: u32 = 1;
+    pub const default_scenarios: u32 = 100;
 
     /// Default simulation mode.
     pub const default_mode: Mode = .quick;
@@ -78,7 +78,7 @@ pub const simulation = struct {
     /// Century mode configuration.
     pub const century = struct {
         pub const duration_years: u32 = 100;
-        pub const ops_per_day: u32 = 25;
+        pub const ops_per_day: u32 = 25_000;
         pub const invariant_check_interval: u32 = 10_000;
         pub const max_operations: u64 = 100_000_000;
     };
@@ -176,7 +176,7 @@ pub const faults = struct {
 
 pub const benchmark = struct {
     /// Default iterations per scenario.
-    pub const default_iterations: u32 = 100;
+    pub const default_iterations: u32 = 10;
 
     /// Ingest benchmark: number of points to append.
     pub const ingest_point_count: u32 = 100_000;
@@ -200,11 +200,22 @@ pub const storage = struct {
     /// Series label length in bytes.
     pub const label_length: u32 = 32;
 
-    /// Skip list maximum level (log2 of segment_capacity_max).
-    pub const skip_list_max_level: u32 = 20;
+    /// File backend header size in bytes (page-aligned).
+    pub const file_backend_header_size: u32 = 4096;
 
-    /// Skip list file header size in bytes (page-aligned).
-    pub const skip_list_header_size: u32 = 4096;
+    /// Storage backend selection.
+    pub const Backend = enum {
+        segment,
+        file,
+    };
+
+    /// Active storage backend. Change to switch the server
+    /// and catalog between in-memory segments and file-backed
+    /// columnar storage. Requires recompile.
+    pub const default_backend: Backend = .file;
+
+    /// Data directory for file-backed backends.
+    pub const data_dir: []const u8 = "tau-data";
 };
 
 // Time Constants
@@ -244,8 +255,6 @@ comptime {
     // Simulation validation.
     assert(simulation.quick.duration_years > 0);
     assert(simulation.quick.ops_per_day > 0);
-    assert(simulation.standard.duration_years > simulation.quick.duration_years);
-    assert(simulation.century.duration_years == 100);
     assert(simulation.shadow_capacity > 0);
     assert(simulation.history_capacity > 0);
 
@@ -260,10 +269,9 @@ comptime {
     assert(storage.segment_capacity_default > 0);
     assert(storage.segment_capacity_default <= storage.segment_capacity_max);
     assert(storage.label_length == 32);
-    assert(storage.skip_list_max_level > 0);
-    assert(storage.skip_list_max_level <= 32);
-    assert(storage.skip_list_header_size >= 4096);
-    assert(storage.skip_list_header_size % 4096 == 0);
+    assert(storage.file_backend_header_size >= 4096);
+    assert(storage.file_backend_header_size % 4096 == 0);
+    assert(storage.data_dir.len > 0);
 
     // Time validation.
     assert(time.ns_per_sec == 1_000_000_000);
@@ -313,8 +321,12 @@ test "time constants are correct" {
 test "storage config is valid" {
     try std.testing.expect(storage.segment_capacity_default <= storage.segment_capacity_max);
     try std.testing.expect(storage.label_length == 32);
-    try std.testing.expect(storage.skip_list_max_level == 20);
-    try std.testing.expect(storage.skip_list_header_size == 4096);
+    try std.testing.expect(storage.file_backend_header_size == 4096);
+    try std.testing.expect(storage.data_dir.len > 0);
+    try std.testing.expect(
+        storage.default_backend == .segment or
+            storage.default_backend == .file,
+    );
 }
 
 test "benchmark config is valid" {

@@ -9,6 +9,9 @@ const Series = tau.entities.Series;
 const Timestamp = tau.entities.Timestamp;
 const TimeDomain = tau.entities.TimeDomain;
 
+const file_backend_mod = tau.file_backend;
+const backend = config.storage.default_backend;
+
 const Clock = @import("clock.zig").Clock;
 const FaultInjector = @import("faults.zig").FaultInjector;
 const StorageFault = @import("faults.zig").StorageFault;
@@ -50,7 +53,10 @@ pub const OpRecord = struct {
 
 // State Machine
 
-/// State machine wrapping a Series(i64) for simulation testing.
+/// File backend type alias for the file-backed backend.
+const FileBackend = file_backend_mod.FileBackedSegment(i64);
+
+/// State machine wrapping a Series(i64) or FileBackedSegment(i64) for simulation testing.
 pub const StateMachine = struct {
     // Configuration Constants (from config.zig)
 
@@ -61,8 +67,14 @@ pub const StateMachine = struct {
 
     // Fields
 
-    /// The series under test.
+    /// The series under test (segment backend).
     series: Series(i64),
+    /// The file backend under test (file backend).
+    file_backend_ptr: ?*FileBackend,
+    /// Temporary directory for file-backed storage isolation.
+    tmp_dir: ?std.testing.TmpDir,
+    /// Allocator for file backend lifecycle.
+    allocator: std.mem.Allocator,
 
     /// Virtual clock.
     clock: *Clock,
@@ -217,14 +229,28 @@ pub const StateMachine = struct {
 
         const shadow = try ShadowState.init(allocator);
 
-        const self = StateMachine{
+        var self = StateMachine{
             .series = Series(i64).init(allocator, label, segment_capacity),
+            .file_backend_ptr = null,
+            .tmp_dir = null,
+            .allocator = allocator,
             .clock = clock,
             .faults = faults_injector,
             .shadow = shadow,
             .history = OpHistory.init(),
             .stats = Stats{},
         };
+
+        // Initialise file backend if selected.
+        if (backend == .file) {
+            self.tmp_dir = std.testing.tmpDir(.{});
+            const fb = allocator.create(FileBackend) catch return error.OutOfMemory;
+            fb.* = FileBackend.init(allocator, self.tmp_dir.?.dir, label, segment_capacity) catch {
+                allocator.destroy(fb);
+                return error.OutOfMemory;
+            };
+            self.file_backend_ptr = fb;
+        }
 
         // Assert postconditions.
         assert(self.shadow.count == 0);
@@ -236,6 +262,15 @@ pub const StateMachine = struct {
 
     /// Cleanup resources.
     pub fn deinit(self: *StateMachine) void {
+        if (backend == .file) {
+            if (self.file_backend_ptr) |fb| {
+                fb.deinit();
+                self.allocator.destroy(fb);
+            }
+            if (self.tmp_dir) |*td| {
+                td.cleanup();
+            }
+        }
         self.series.deinit();
         self.shadow.deinit();
         self.* = undefined;
@@ -271,27 +306,50 @@ pub const StateMachine = struct {
             return .error_fault_injected;
         }
 
-        // Apply to real series.
-        self.series.append(timestamp, value) catch |err| {
-            self.stats.operations_error += 1;
+        // Apply to real storage backend.
+        if (backend == .segment) {
+            self.series.append(timestamp, value) catch |err| {
+                self.stats.operations_error += 1;
 
-            const result: OpResult = switch (err) {
-                error.OutOfOrder => .error_out_of_order,
-                error.SegmentFull => .error_segment_full,
-                else => .error_invariant_violated,
+                const result: OpResult = switch (err) {
+                    error.OutOfOrder => .error_out_of_order,
+                    error.SegmentFull => .error_segment_full,
+                    else => .error_invariant_violated,
+                };
+
+                self.history.push(.{
+                    .tick = tick,
+                    .timestamp = timestamp,
+                    .operation = .append,
+                    .result = result,
+                    .value_before = null,
+                    .value_after = null,
+                });
+
+                return result;
             };
+        } else if (backend == .file) {
+            self.file_backend_ptr.?.append(timestamp, value) catch |err| {
+                self.stats.operations_error += 1;
 
-            self.history.push(.{
-                .tick = tick,
-                .timestamp = timestamp,
-                .operation = .append,
-                .result = result,
-                .value_before = null,
-                .value_after = null,
-            });
+                const result: OpResult = switch (err) {
+                    error.OutOfOrder => .error_out_of_order,
+                    error.SegmentFull => .error_segment_full,
+                    else => .error_invariant_violated,
+                };
 
-            return result;
-        };
+                self.history.push(.{
+                    .tick = tick,
+                    .timestamp = timestamp,
+                    .operation = .append,
+                    .result = result,
+                    .value_before = null,
+                    .value_after = null,
+                });
+
+                return result;
+            };
+        }
 
         // Apply to shadow state.
         self.shadow.append(timestamp, value) catch {
@@ -310,8 +368,9 @@ pub const StateMachine = struct {
             .value_after = value,
         });
 
-        // Assert postcondition: series and shadow agree.
-        assert(self.series.count() == self.shadow.count);
+        // Assert postcondition: storage and shadow agree.
+        const storage_count = if (backend == .segment) self.series.count() else self.file_backend_ptr.?.count;
+        assert(storage_count == self.shadow.count);
 
         return .success;
     }
@@ -341,7 +400,7 @@ pub const StateMachine = struct {
         }
 
         // Lookup in both.
-        const series_value = self.series.at(timestamp);
+        const series_value = if (backend == .segment) self.series.at(timestamp) else self.file_backend_ptr.?.at(timestamp);
         const shadow_value = self.shadow.lookup(timestamp);
 
         // Verify match.
@@ -390,7 +449,8 @@ pub const StateMachine = struct {
         self.stats.invariant_checks += 1;
 
         // Invariant 1: counts match.
-        if (self.series.count() != self.shadow.count) {
+        const storage_count = if (backend == .segment) self.series.count() else self.file_backend_ptr.?.count;
+        if (storage_count != self.shadow.count) {
             self.stats.invariant_violations += 1;
             self.history.push(.{
                 .tick = tick,
@@ -398,13 +458,13 @@ pub const StateMachine = struct {
                 .operation = .verify_invariants,
                 .result = .error_invariant_violated,
                 .value_before = @as(i64, self.shadow.count),
-                .value_after = @as(i64, self.series.count()),
+                .value_after = @as(i64, storage_count),
             });
             return .error_invariant_violated;
         }
 
         // Invariant 2: domains match.
-        const series_domain = self.series.domain;
+        const series_domain = self.storageDomain();
         const shadow_domain = self.shadow.domain();
 
         if (series_domain.start != shadow_domain.start or
@@ -440,13 +500,24 @@ pub const StateMachine = struct {
 
     /// Get the current count of items.
     pub fn count(self: *const StateMachine) u32 {
-        const series_count = self.series.count();
+        const series_count = if (backend == .segment) self.series.count() else self.file_backend_ptr.?.count;
         const shadow_count = self.shadow.count;
 
         // Assert invariant.
         assert(series_count == shadow_count);
 
         return series_count;
+    }
+
+    /// Get the current storage domain.
+    pub fn storageDomain(self: *const StateMachine) TimeDomain {
+        if (backend == .segment) {
+            return self.series.domain;
+        } else {
+            const fb = self.file_backend_ptr.?;
+            if (fb.count == 0) return TimeDomain.empty();
+            return .{ .start = fb.header.min_timestamp, .end = fb.header.max_timestamp };
+        }
     }
 
     /// Get current statistics.
