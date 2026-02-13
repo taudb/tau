@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/bxrne/tau/compare/v1.1.0...v1.2.0) (2026-02-13)
+
+
+### Features
+
+* add initial socket-test implementation with TCP client and file-backed storage ([f9a8dc2](https://github.com/bxrne/tau/commit/f9a8dc2de36c63d4562e25d46e235c91fcb49029))
+* implement skiplist ([401a6ec](https://github.com/bxrne/tau/commit/401a6ec80618609e2ef638424aa8dd2e106ccb7a))
+
 ## [1.1.0](https://github.com/bxrne/tau/compare/v1.0.0...v1.1.0) (2026-02-11)
 
 
