@@ -2,9 +2,10 @@
 
 const std = @import("std");
 const tau = @import("tau");
+const config = tau.config;
 const harness = @import("harness.zig");
 
-const iteration_count: u64 = 100;
+const iteration_count: u64 = config.benchmark.default_iterations;
 
 const header_length: u32 = 10;
 const protocol_magic = [3]u8{ 'T', 'A', 'U' };

@@ -11,6 +11,7 @@ const ns_per_day = @import("clock.zig").ns_per_day;
 
 const FaultInjector = @import("faults.zig").FaultInjector;
 const FaultConfig = @import("faults.zig").FaultConfig;
+const FaultStats = @import("faults.zig").FaultStats;
 
 const PRNG = @import("prng.zig").PRNG;
 
@@ -89,9 +90,9 @@ pub const ScenarioResult = struct {
     final_count: u32,
     invariant_violations: u64,
     faults_injected: u64,
+    faults: FaultStats,
     failure_reason: ?FailureReason,
     duration_ns: u64,
-
     pub const FailureReason = enum {
         invariant_violated,
         operation_limit_exceeded,
@@ -99,8 +100,6 @@ pub const ScenarioResult = struct {
         unexpected_error,
     };
 };
-
-// Harness
 
 pub const Harness = struct {
     const max_tracked_failures: u32 = config.simulation.max_tracked_failures;
@@ -148,9 +147,9 @@ pub const Harness = struct {
         // Assert preconditions.
         assert(scenario_config.seed >= 1);
         assert(scenario_config.duration_years > 0);
-        assert(scenario_config.duration_years <= 1000);
+        assert(scenario_config.duration_years <= 10_000);
         assert(scenario_config.ops_per_day > 0);
-        assert(scenario_config.ops_per_day <= 100_000);
+        assert(scenario_config.ops_per_day <= 1_000_000);
         assert(scenario_config.invariant_check_interval > 0);
 
         const start_time = std.time.nanoTimestamp();
@@ -169,6 +168,7 @@ pub const Harness = struct {
                 .final_count = 0,
                 .invariant_violations = 0,
                 .faults_injected = 0,
+                .faults = FaultStats{},
                 .failure_reason = .unexpected_error,
                 .duration_ns = 0,
             };
@@ -259,6 +259,7 @@ pub const Harness = struct {
             .final_count = sm.count(),
             .invariant_violations = sm_stats.invariant_violations,
             .faults_injected = fault_stats.total_injections,
+            .faults = fault_stats,
             .failure_reason = failure_reason,
             .duration_ns = duration,
         };
@@ -341,7 +342,7 @@ pub const Harness = struct {
                 return sm.apply_append(next_timestamp.*, value);
             },
             .lookup => {
-                const domain = sm.series.domain;
+                const domain = sm.storageDomain();
 
                 if (domain.is_empty()) {
                     return sm.apply_lookup(0);
