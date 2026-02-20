@@ -33,11 +33,20 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&bench_cmd.step);
     bench_cmd.step.dependOn(b.getInstallStep());
 
+    const actor_mod_build = b.addModule("actor", .{
+        .root_source_file = b.path("src/server/actor.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "tau", .module = mod },
+        },
+    });
+
     const catalog_mod_build = b.addModule("catalog", .{
         .root_source_file = b.path("src/server/catalog.zig"),
         .target = target,
         .imports = &.{
             .{ .name = "tau", .module = mod },
+            .{ .name = "actor", .module = actor_mod_build },
         },
     });
 

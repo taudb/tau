@@ -37,6 +37,13 @@ pub const server = struct {
 
     /// Default segment capacity for new series.
     pub const default_segment_capacity: u32 = 1024;
+
+    /// Actor pool size (number of worker threads).
+    /// Defaults to CPU core count if 0.
+    pub const actor_pool_size: u32 = 0;
+
+    /// Mailbox capacity per actor (bounded ring buffer size).
+    pub const mailbox_capacity: u32 = 1024;
 };
 
 // Simulation Configuration

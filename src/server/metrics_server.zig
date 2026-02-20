@@ -144,12 +144,97 @@ pub fn format_metrics(
 
     // Catalog metrics (read under existing RwLock).
     catalog.lock.lockShared();
-    const series_count = catalog.series_map.count();
+    const series_count = catalog.actor_map.count();
+    
+    // Actor pool metrics
+    var actor_pool_size: u32 = 0;
+    var messages_processed: u64 = 0;
+    var worker_iterations: u64 = 0;
+    var worker_idle_iterations: u64 = 0;
+    
+    if (catalog.actor_pool) |*pool| {
+        const pool_stats = pool.get_stats();
+        actor_pool_size = pool_stats.pool_size;
+        messages_processed = pool_stats.messages_processed;
+        worker_iterations = pool_stats.worker_iterations;
+        worker_idle_iterations = pool_stats.worker_idle_iterations;
+    }
+    
+    // Mailbox metrics (aggregate across all actors)
+    var total_mailbox_messages_sent: u64 = 0;
+    var total_mailbox_messages_received: u64 = 0;
+    var total_mailbox_send_failures: u64 = 0;
+    var total_mailbox_queue_depth: u64 = 0;
+    var mailboxes_full: u32 = 0;
+    var mailboxes_empty: u32 = 0;
+    
+    var actor_iterator = catalog.actor_map.iterator();
+    while (actor_iterator.next()) |entry| {
+        const actor = entry.value_ptr.*;
+        if (!actor.is_alive.load(.monotonic)) continue;
+        
+        total_mailbox_messages_sent += actor.mailbox.messages_sent.load(.monotonic);
+        total_mailbox_messages_received += actor.mailbox.messages_received.load(.monotonic);
+        total_mailbox_send_failures += actor.mailbox.send_failures.load(.monotonic);
+        
+        const queue_depth = actor.mailbox.queue_depth();
+        total_mailbox_queue_depth += queue_depth;
+        
+        if (queue_depth == actor.mailbox.capacity) {
+            mailboxes_full += 1;
+        }
+        if (queue_depth == 0) {
+            mailboxes_empty += 1;
+        }
+    }
+    
     catalog.lock.unlockShared();
 
     try w.writeAll("# HELP tau_series_count Number of live series.\n");
     try w.writeAll("# TYPE tau_series_count gauge\n");
     try std.fmt.format(w, "tau_series_count {d}\n", .{series_count});
+    
+    // Actor pool metrics
+    try w.writeAll("# HELP tau_actor_pool_size Number of worker threads in actor pool.\n");
+    try w.writeAll("# TYPE tau_actor_pool_size gauge\n");
+    try std.fmt.format(w, "tau_actor_pool_size {d}\n", .{actor_pool_size});
+    
+    try w.writeAll("# HELP tau_actor_messages_processed_total Total messages processed by actor pool.\n");
+    try w.writeAll("# TYPE tau_actor_messages_processed_total counter\n");
+    try std.fmt.format(w, "tau_actor_messages_processed_total {d}\n", .{messages_processed});
+    
+    try w.writeAll("# HELP tau_actor_worker_iterations_total Total worker loop iterations.\n");
+    try w.writeAll("# TYPE tau_actor_worker_iterations_total counter\n");
+    try std.fmt.format(w, "tau_actor_worker_iterations_total {d}\n", .{worker_iterations});
+    
+    try w.writeAll("# HELP tau_actor_worker_idle_iterations_total Total idle worker iterations.\n");
+    try w.writeAll("# TYPE tau_actor_worker_idle_iterations_total counter\n");
+    try std.fmt.format(w, "tau_actor_worker_idle_iterations_total {d}\n", .{worker_idle_iterations});
+    
+    // Mailbox metrics
+    try w.writeAll("# HELP tau_mailbox_messages_sent_total Total messages sent to mailboxes.\n");
+    try w.writeAll("# TYPE tau_mailbox_messages_sent_total counter\n");
+    try std.fmt.format(w, "tau_mailbox_messages_sent_total {d}\n", .{total_mailbox_messages_sent});
+    
+    try w.writeAll("# HELP tau_mailbox_messages_received_total Total messages received from mailboxes.\n");
+    try w.writeAll("# TYPE tau_mailbox_messages_received_total counter\n");
+    try std.fmt.format(w, "tau_mailbox_messages_received_total {d}\n", .{total_mailbox_messages_received});
+    
+    try w.writeAll("# HELP tau_mailbox_send_failures_total Total mailbox send failures (mailbox full).\n");
+    try w.writeAll("# TYPE tau_mailbox_send_failures_total counter\n");
+    try std.fmt.format(w, "tau_mailbox_send_failures_total {d}\n", .{total_mailbox_send_failures});
+    
+    try w.writeAll("# HELP tau_mailbox_queue_depth_total Sum of all mailbox queue depths.\n");
+    try w.writeAll("# TYPE tau_mailbox_queue_depth_total gauge\n");
+    try std.fmt.format(w, "tau_mailbox_queue_depth_total {d}\n", .{total_mailbox_queue_depth});
+    
+    try w.writeAll("# HELP tau_mailbox_full_count Number of mailboxes that are full.\n");
+    try w.writeAll("# TYPE tau_mailbox_full_count gauge\n");
+    try std.fmt.format(w, "tau_mailbox_full_count {d}\n", .{mailboxes_full});
+    
+    try w.writeAll("# HELP tau_mailbox_empty_count Number of mailboxes that are empty.\n");
+    try w.writeAll("# TYPE tau_mailbox_empty_count gauge\n");
+    try std.fmt.format(w, "tau_mailbox_empty_count {d}\n", .{mailboxes_empty});
 
     // Process metrics.
     const uptime_ms = std.time.milliTimestamp() - counters.start_time_ms;
