@@ -1,10 +1,7 @@
 //! Core benchmark scenarios: entities and storage layer.
 //!
 //! Benchmarks both in-memory Segment and file-backed columnar
-//! storage backends side-by-side for comparison.
-//!
-//! All benchmarks run regardless of configuration - both backends
-//! are always tested. Constants (point counts, iterations) are
+//! storage backends side-by-side for comparison. All constants are
 //! driven by config.benchmark.
 
 const std = @import("std");

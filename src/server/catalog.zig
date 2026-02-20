@@ -1,8 +1,9 @@
-//! Actor-based series registry.
+//! Thread-safe series registry.
 //!
-//! The catalog maps series labels to their SeriesActor instances.
-//! Each actor has its own mailbox, enabling parallel operations
-//! across different series without locks on series data.
+//! The catalog maps series labels to their Series instances.
+//! It uses a RwLock so that multiple readers (point queries)
+//! can proceed concurrently while writes (create, drop, append)
+//! take exclusive access.
 //!
 //! The storage backend is selected at compile time via
 //! config.storage.default_backend.
@@ -12,7 +13,6 @@ const tau = @import("tau");
 const tau_entities = tau.entities;
 const tau_config = tau.config;
 const file_backend_mod = tau.file_backend;
-const actor_mod = @import("actor");
 
 const Timestamp = tau_entities.Timestamp;
 
@@ -23,21 +23,19 @@ pub const backend = tau_config.storage.default_backend;
 
 const Series = tau_entities.Series(f64);
 const FileBackend = file_backend_mod.FileBackedSegment(f64);
-const SeriesActor = actor_mod.SeriesActor;
-const Message = actor_mod.Message;
-const ResponseSlot = actor_mod.ResponseSlot;
-const ActorPool = actor_mod.ActorPool;
-const log = std.log.scoped(.catalog);
 
 pub const Catalog = struct {
     allocator: std.mem.Allocator,
     data_dir: ?std.fs.Dir,
-    actor_map: std.AutoArrayHashMapUnmanaged(
+    series_map: std.AutoArrayHashMapUnmanaged(
         [label_length]u8,
-        *SeriesActor,
+        *Series,
     ),
-    actor_pool: ?ActorPool,
-    lock: std.Thread.RwLock, // Protects only the routing table (create/drop)
+    file_backend_map: std.AutoArrayHashMapUnmanaged(
+        [label_length]u8,
+        *FileBackend,
+    ),
+    lock: std.Thread.RwLock,
 
     const Self = @This();
 
@@ -53,8 +51,8 @@ pub const Catalog = struct {
         var self = Self{
             .allocator = allocator,
             .data_dir = data_dir,
-            .actor_map = .{},
-            .actor_pool = null,
+            .series_map = .{},
+            .file_backend_map = .{},
             .lock = .{},
         };
 
@@ -73,46 +71,41 @@ pub const Catalog = struct {
                     const copy_len = @min(base_len, label_length);
                     @memcpy(label_buf[0..copy_len], name[0..copy_len]);
 
-                    const actor = allocator.create(SeriesActor) catch continue;
-                    actor.* = SeriesActor.init(allocator, label_buf, dir) catch {
-                        allocator.destroy(actor);
+                    const fb = allocator.create(FileBackend) catch continue;
+                    fb.* = FileBackend.init(allocator, dir, label_buf, segment_capacity_default) catch {
+                        allocator.destroy(fb);
                         continue;
                     };
-                    self.actor_map.put(allocator, label_buf, actor) catch {
-                        actor.deinit();
-                        allocator.destroy(actor);
+                    self.file_backend_map.put(allocator, label_buf, fb) catch {
+                        fb.deinit();
+                        allocator.destroy(fb);
                         continue;
                     };
                 }
             }
         }
 
-        // Initialize actor pool
-        self.actor_pool = ActorPool.init(
-            allocator,
-            &self.actor_map,
-            &self.lock,
-        );
-        if (self.actor_pool.?.start()) |_| {} else |err| {
-            log.warn("actor pool start failed: {s}", .{@errorName(err)});
-            self.actor_pool = null;
-        }
-
         return self;
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.actor_pool) |*pool| {
-            pool.deinit();
+        if (backend == .segment) {
+            var iterator = self.series_map.iterator();
+            while (iterator.next()) |entry| {
+                entry.value_ptr.*.deinit();
+                self.allocator.destroy(entry.value_ptr.*);
+            }
+            self.series_map.deinit(self.allocator);
         }
-
-        var iterator = self.actor_map.iterator();
-        while (iterator.next()) |entry| {
-            entry.value_ptr.*.deinit();
-            self.allocator.destroy(entry.value_ptr.*);
+        if (backend == .file) {
+            var iterator = self.file_backend_map.iterator();
+            while (iterator.next()) |entry| {
+                entry.value_ptr.*.deinit();
+                self.allocator.destroy(entry.value_ptr.*);
+            }
+            self.file_backend_map.deinit(self.allocator);
+            if (self.data_dir) |*dir| dir.close();
         }
-        self.actor_map.deinit(self.allocator);
-        if (self.data_dir) |*dir| dir.close();
     }
 
     pub fn create_series(
@@ -122,34 +115,64 @@ pub const Catalog = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (self.actor_map.count() >= series_count_max) {
-            return error.CatalogFull;
+        if (backend == .segment) {
+            if (self.series_map.count() >= series_count_max) {
+                return error.CatalogFull;
+            }
+
+            const result = self.series_map.getOrPut(
+                self.allocator,
+                label,
+            ) catch return error.OutOfMemory;
+
+            if (result.found_existing) {
+                return error.SeriesAlreadyExists;
+            }
+
+            const series = self.allocator.create(
+                Series,
+            ) catch return error.OutOfMemory;
+
+            series.* = Series.init(
+                self.allocator,
+                label,
+                segment_capacity_default,
+            );
+            result.value_ptr.* = series;
         }
+        if (backend == .file) {
+            if (self.file_backend_map.count() >= series_count_max) {
+                return error.CatalogFull;
+            }
 
-        const result = self.actor_map.getOrPut(
-            self.allocator,
-            label,
-        ) catch return error.OutOfMemory;
+            const result = self.file_backend_map.getOrPut(
+                self.allocator,
+                label,
+            ) catch return error.OutOfMemory;
 
-        if (result.found_existing) {
-            return error.SeriesAlreadyExists;
+            if (result.found_existing) {
+                return error.SeriesAlreadyExists;
+            }
+
+            const dir = self.data_dir orelse
+                return error.OutOfMemory;
+
+            const fb = self.allocator.create(
+                FileBackend,
+            ) catch return error.OutOfMemory;
+
+            fb.* = FileBackend.init(
+                self.allocator,
+                dir,
+                label,
+                segment_capacity_default,
+            ) catch {
+                self.allocator.destroy(fb);
+                _ = self.file_backend_map.swapRemove(label);
+                return error.OutOfMemory;
+            };
+            result.value_ptr.* = fb;
         }
-
-        const dir = if (backend == .file) self.data_dir else null;
-        const actor = self.allocator.create(SeriesActor) catch
-            return error.OutOfMemory;
-
-        actor.* = SeriesActor.init(
-            self.allocator,
-            label,
-            dir,
-        ) catch {
-            self.allocator.destroy(actor);
-            _ = self.actor_map.swapRemove(label);
-            return error.OutOfMemory;
-        };
-
-        result.value_ptr.* = actor;
     }
 
     pub fn drop_series(
@@ -159,14 +182,19 @@ pub const Catalog = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        const entry = self.actor_map.fetchSwapRemove(label) orelse
-            return error.SeriesNotFound;
-
-        entry.value.stop();
-        entry.value.deinit();
-        self.allocator.destroy(entry.value);
-
+        if (backend == .segment) {
+            const entry = self.series_map.fetchSwapRemove(
+                label,
+            ) orelse return error.SeriesNotFound;
+            entry.value.deinit();
+            self.allocator.destroy(entry.value);
+        }
         if (backend == .file) {
+            const entry = self.file_backend_map.fetchSwapRemove(
+                label,
+            ) orelse return error.SeriesNotFound;
+            entry.value.deinit();
+            self.allocator.destroy(entry.value);
             if (self.data_dir) |*dir| {
                 const filename = FileBackend.derive_filename(label);
                 dir.deleteFile(filename.slice()) catch {};
@@ -180,42 +208,30 @@ pub const Catalog = struct {
         timestamp: Timestamp,
         value: f64,
     ) AppendError!void {
-        // Lookup actor (read-only under shared lock).
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
-        const actor = self.actor_map.get(label) orelse {
-            return error.SeriesNotFound;
-        };
+        self.lock.lock();
+        defer self.lock.unlock();
 
-        // Send message to actor
-        var response_slot = ResponseSlot.init();
-        const message = Message{ .append = .{
-            .timestamp = timestamp,
-            .value = value,
-            .response = &response_slot,
-        } };
-
-        // Try to send (non-blocking)
-        if (!actor.mailbox.try_send(message)) {
-            return error.OutOfMemory; // Mailbox full
-        }
-
-        // Process message immediately if actor pool not ready.
-        if (self.actor_pool == null) {
-            while (!response_slot.is_ready()) {
-                _ = actor.process_one();
-                std.Thread.yield() catch {};
-            }
-        }
-
-        // Wait for response
-        const result = response_slot.wait() catch |err| {
-            return switch (err) {
-                error.OutOfOrder => error.OutOfOrder,
-                else => error.OutOfMemory,
+        if (backend == .segment) {
+            const series = self.series_map.get(label) orelse
+                return error.SeriesNotFound;
+            series.append(timestamp, value) catch |err| {
+                return switch (err) {
+                    error.OutOfOrder => error.OutOfOrder,
+                    else => error.OutOfMemory,
+                };
             };
-        };
-        _ = result; // Append returns void on success
+        }
+        if (backend == .file) {
+            const fb = self.file_backend_map.get(label) orelse
+                return error.SeriesNotFound;
+            fb.append(timestamp, value) catch |err| {
+                return switch (err) {
+                    error.OutOfOrder => error.OutOfOrder,
+                    error.SegmentFull => error.OutOfMemory,
+                    else => error.OutOfMemory,
+                };
+            };
+        }
     }
 
     pub fn query_point(
@@ -223,40 +239,20 @@ pub const Catalog = struct {
         label: [label_length]u8,
         timestamp: Timestamp,
     ) QueryError!?f64 {
-        // Lookup actor (read-only under shared lock).
         self.lock.lockShared();
         defer self.lock.unlockShared();
-        const actor = self.actor_map.get(label) orelse {
-            return error.SeriesNotFound;
-        };
 
-        // Send message to actor
-        var response_slot = ResponseSlot.init();
-        const message = Message{ .query_point = .{
-            .timestamp = timestamp,
-            .response = &response_slot,
-        } };
-
-        // Try to send (non-blocking)
-        if (!actor.mailbox.try_send(message)) {
-            return error.OutOfMemory; // Mailbox full
+        if (backend == .segment) {
+            const series = self.series_map.get(label) orelse
+                return error.SeriesNotFound;
+            return series.at(timestamp);
         }
-
-        // Process message immediately if actor pool not ready.
-        if (self.actor_pool == null) {
-            while (!response_slot.is_ready()) {
-                _ = actor.process_one();
-                std.Thread.yield() catch {};
-            }
+        if (backend == .file) {
+            const fb = self.file_backend_map.get(label) orelse
+                return error.SeriesNotFound;
+            return fb.at(timestamp);
         }
-
-        // Wait for response
-        return response_slot.wait() catch |err| {
-            return switch (err) {
-                error.SeriesNotFound => error.SeriesNotFound,
-                else => error.OutOfMemory,
-            };
-        };
+        return error.SeriesNotFound;
     }
 
     pub const CreateError = error{
@@ -277,7 +273,6 @@ pub const Catalog = struct {
 
     pub const QueryError = error{
         SeriesNotFound,
-        OutOfMemory,
     };
 };
 
