@@ -15,8 +15,6 @@ pub const server = struct {
     pub const connection_timeout_ms: u32 = 30_000;
     pub const max_payload_bytes: u32 = 1024 * 1024;
     pub const catalog_capacity: u32 = 10_000;
-    pub const actor_pool_size: u32 = 0;  // 0 = CPU core count
-    pub const mailbox_capacity: u32 = 1024;
 };
 ```
 
@@ -28,8 +26,7 @@ pub const server = struct {
 |---|---|
 | `protocol.zig` | Wire format: 10-byte header, opcodes, status codes. |
 | `auth.zig` | Pre-shared certificate authentication, session lifecycle. |
-| `actor.zig` | Actor model: Message, Mailbox, SeriesActor, ActorPool, ResponseSlot. |
-| `catalog.zig` | Series registry: routes operations to actor mailboxes. |
+| `catalog.zig` | Thread-safe series registry with RwLock. |
 | `handler.zig` | Per-connection request dispatch. |
 | `listener.zig` | TCP accept loop, spawns a thread per connection. |
 | `main.zig` | Entry point. |
@@ -99,9 +96,6 @@ sock.close()
 
 ## Threading model
 
-- **One thread per connection** (spawned on accept, detached).
-- **Actor-based concurrency**: Each series is an independent actor with its own mailbox.
-- **Worker thread pool**: Fixed-size pool (default: CPU core count) processes messages from actor mailboxes.
-- **Zero cross-series contention**: Operations on different series proceed in full parallel.
-- **Lock-free data path**: Series data is actor-private; only the routing table (create/drop) uses a small RwLock.
-- **Bounded mailboxes**: Each actor has a bounded ring buffer mailbox (default: 1024 messages) for back-pressure.
+- One thread per connection (spawned on accept, detached).
+- `Catalog` uses `RwLock`: queries take a shared lock, mutations take an exclusive lock.
+- Multiple readers proceed concurrently; writes serialise.
