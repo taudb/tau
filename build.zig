@@ -121,24 +121,4 @@ pub fn build(b: *std.Build) void {
     });
     const run_sim_tests = b.addRunArtifact(sim_tests);
     test_step.dependOn(&run_sim_tests.step);
-
-    const repl_exe = b.addExecutable(.{
-        .name = "repl",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/repl/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "tau", .module = mod },
-                .{ .name = "protocol", .module = protocol_mod_build },
-            },
-        }),
-    });
-
-    b.installArtifact(repl_exe);
-
-    const repl_step = b.step("repl", "Run the Tau REPL client");
-    const repl_cmd = b.addRunArtifact(repl_exe);
-    repl_step.dependOn(&repl_cmd.step);
-    repl_cmd.step.dependOn(b.getInstallStep());
 }
