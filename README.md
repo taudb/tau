@@ -11,6 +11,7 @@ Zero external dependencies. Requires only the Zig toolchain.
 - **Lenses for transformation.** A `Lens(In, Out)` applies a pure function over a live Series without copying data.
 - **Immutable by composition.** Change is expressed by composing new lenses, not by mutating existing series.
 - **Columnar storage.** Series are backed by `Segment` blocks — contiguous, sorted, append-only timestamp and value columns with O(log n) point lookup.
+- **Actor-based concurrency.** Each series is an independent actor with its own mailbox, enabling parallel operations across different series without locks on series data.
 
 ## Configuration
 
@@ -22,6 +23,8 @@ pub const server = struct {
     pub const port: u16 = 7701;
     pub const address: [4]u8 = .{ 127, 0, 0, 1 };
     pub const certificate: [32]u8 = .{ ... };
+    pub const actor_pool_size: u32 = 0;  // 0 = CPU core count
+    pub const mailbox_capacity: u32 = 1024;
     // ...
 };
 
@@ -49,6 +52,27 @@ zig build server       # starts on configured address:port
 ```
 
 Default: `127.0.0.1:7701`. See [src/server/README.md](src/server/README.md) for the wire protocol.
+
+### Example Client
+
+A complete Python client example is available in [`dev/`](dev/):
+
+```sh
+# Start the server
+zig build server
+
+# In another terminal, run the example client
+cd dev
+uv run main.py
+```
+
+The example demonstrates all protocol operations with domain examples:
+- Temperature sensor readings
+- Pressure measurements  
+- Voltage monitoring
+- Error handling
+
+See [`dev/README.md`](dev/README.md) for details.
 
 ## Simulation
 
@@ -82,9 +106,15 @@ src/
 ├── config.zig       # All configuration (edit to configure)
 ├── root.zig         # Library root
 ├── core/            # Data model: Series, Segment, Lens
-├── server/          # TCP database server
+├── server/          # TCP database server (actor-based concurrency)
+│   ├── actor.zig   # Actor model: Mailbox, SeriesActor, ActorPool
+│   ├── catalog.zig  # Series registry (routes to actors)
+│   └── ...
 ├── sim/             # Simulation testing framework
 └── bench/           # Benchmark harness
+dev/                  # Development tools
+├── main.py          # Example Python client (all protocol operations)
+└── containers/      # Prometheus & Grafana observability stack
 ```
 
 ## Design documents
