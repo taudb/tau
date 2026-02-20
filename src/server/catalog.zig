@@ -87,9 +87,19 @@ pub const Catalog = struct {
             }
         }
 
-        // Initialize actor pool
+        // NOTE: Actor pool is NOT started here. Catalog.init() returns by
+        // value, so any pointers taken to self.actor_map / self.lock would
+        // dangle after the copy.  Call start() once the struct is at its
+        // final memory address.
+
+        return self;
+    }
+
+    /// Start the actor pool. Must be called after the Catalog is at its
+    /// final memory location (i.e. after init() return value is assigned).
+    pub fn start(self: *Self) void {
         self.actor_pool = ActorPool.init(
-            allocator,
+            self.allocator,
             &self.actor_map,
             &self.lock,
         );
@@ -97,8 +107,6 @@ pub const Catalog = struct {
             log.warn("actor pool start failed: {s}", .{@errorName(err)});
             self.actor_pool = null;
         }
-
-        return self;
     }
 
     pub fn deinit(self: *Self) void {
