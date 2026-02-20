@@ -43,6 +43,10 @@ pub const Listener = struct {
     }
 
     pub fn start(self: *Self) !void {
+        // Start the actor pool now that the Catalog is at its final
+        // memory address (self is a stable pointer from main's stack).
+        self.catalog.start();
+
         const address = std.net.Address.initIp4(
             self.config.address,
             self.config.port,
